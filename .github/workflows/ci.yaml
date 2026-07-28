@@ -35,7 +35,7 @@ jobs:
         run: nix flake check
 
       - name: Test
-        run: nix develop -c cargo test --workspace
+        run: nix develop -c cargo test --workspace --all-features
 
       - name: Clippy
-        run: nix develop -c cargo clippy --workspace --all-targets -- --deny warnings
+        run: nix develop -c cargo clippy --workspace --all-targets --all-features -- --deny warnings
