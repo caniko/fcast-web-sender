@@ -1,0 +1,13 @@
+{
+  "name": "@fcast/extension-core",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": { "@fcast/bridge-types": "workspace:*" },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --experimental-strip-types src/self-check.ts"
+  }
+}

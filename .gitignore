@@ -1,0 +1,7 @@
+/target/
+/**/dist/
+/**/node_modules/
+/.direnv/
+/.simit/
+.pre-commit-config.yaml
+*.swp

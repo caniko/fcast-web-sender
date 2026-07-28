@@ -1,0 +1,8 @@
+{
+  "id": "fixture._fcast._tcp.local:46899",
+  "instance": "Fixture Receiver",
+  "host": "fixture.local",
+  "port": 46899,
+  "addresses": ["192.0.2.42"],
+  "txt": {"fn": "Fixture Receiver", "fp": "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+}

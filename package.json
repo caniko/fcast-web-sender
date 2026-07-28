@@ -1,0 +1,19 @@
+{
+  "name": "fcast-web-sender",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A privacy-preserving browser sender for FCast receivers.",
+  "license": "MIT",
+  "packageManager": "pnpm@11.11.0",
+  "scripts": {
+    "generate": "node tools/generate-bridge.mjs",
+    "schema-check": "node tools/validate-schemas.mjs",
+    "build": "pnpm generate && pnpm -r --if-present build",
+    "test": "pnpm schema-check && pnpm generate && pnpm -r --if-present test",
+    "check": "pnpm schema-check && pnpm generate && pnpm -r --if-present build && pnpm -r --if-present check",
+    "package": "pnpm build && node tools/package-extensions.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,26 @@
+[package]
+name = "fcast-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+base64.workspace = true
+fcast-sender-sdk = { git = "https://gitlab.futo.org/videostreaming/fcast.git", rev = "91f0261ec98217ee76beb76d773e3d06041023eb", default-features = false, features = [
+  "fcast",
+  "discovery",
+], optional = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[features]
+default = ["upstream"]
+upstream = ["dep:fcast-sender-sdk"]

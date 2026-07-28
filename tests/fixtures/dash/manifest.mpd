@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD type="static" mediaPresentationDuration="PT8S">
+  <Period><AdaptationSet contentType="video"><Representation id="fixture" bandwidth="1">
+    <BaseURL>segment-1.m4s</BaseURL>
+  </Representation></AdaptationSet></Period>
+</MPD>

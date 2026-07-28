@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/caniko/fcast-web-sender/schemas/diagnostics-v1.schema.json",
+  "title": "FCast Web Sender Diagnostics v1",
+  "type": "object",
+  "required": ["protocolVersion", "uptimeMs", "receivers", "sessions", "warnings"],
+  "additionalProperties": false,
+  "properties": {
+    "protocolVersion": { "const": 1 },
+    "uptimeMs": { "type": "integer", "minimum": 0 },
+    "receivers": { "type": "integer", "minimum": 0 },
+    "sessions": { "type": "integer", "minimum": 0 },
+    "warnings": { "type": "array", "items": { "type": "string", "maxLength": 256 } },
+    "lastError": { "type": ["string", "null"], "maxLength": 256 }
+  }
+}

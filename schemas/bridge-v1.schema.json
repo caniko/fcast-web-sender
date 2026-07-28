@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/caniko/fcast-web-sender/schemas/bridge-v1.schema.json",
+  "title": "FCast Web Sender Native Bridge v1",
+  "type": "object",
+  "required": ["v", "id", "method", "params"],
+  "additionalProperties": false,
+  "properties": {
+    "v": { "const": 1 },
+    "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "method": {
+      "type": "string",
+      "enum": [
+        "bridge.hello", "bridge.status", "diagnostics.snapshot",
+        "discovery.start", "discovery.stop", "receiver.list",
+        "receiver.connect", "receiver.disconnect", "receiver.trust",
+        "receiver.forget", "session.load", "session.control",
+        "session.selectTrack", "session.close", "companion.register",
+        "companion.unregister", "mirror.negotiate"
+      ]
+    },
+    "params": { "type": "object", "maxProperties": 64 }
+  }
+}

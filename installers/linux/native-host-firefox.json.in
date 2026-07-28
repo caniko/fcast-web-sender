@@ -1,0 +1,7 @@
+{
+  "name": "com.caniko.fcast_web_sender",
+  "description": "FCast Web Sender native companion",
+  "path": "@COMPANION_PATH@",
+  "type": "stdio",
+  "allowed_extensions": ["fcast-web-sender@caniko.com"]
+}

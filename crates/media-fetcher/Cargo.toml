@@ -1,0 +1,18 @@
+[package]
+name = "fcast-media-fetcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+fcast-manifest-rewriter = { path = "../manifest-rewriter" }
+reqwest.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+url.workspace = true

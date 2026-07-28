@@ -1,0 +1,29 @@
+[flake]
+scope = "hooks-only"
+
+[ci]
+provider = "actions"
+platform = "github"
+runtime = "nix"
+runner = "ubuntu-latest"
+workspace = true
+workspace_strategy = "aggregate"
+
+[release.github]
+repo = "caniko/fcast-web-sender"
+target_branch = "trunk"
+
+[release.artifacts]
+runner = "ubuntu-24.04"
+substituters = ["https://attic.candee.baby/canix", "https://cache.nixos.org"]
+trusted_public_keys = [
+  "canix:lPzPzKrmYqW5Rxa5r0uQWvCqD3S5nx0h2eCy7XD5JM8=",
+  "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=",
+]
+prebuild_binaries = true
+version_attr = "fcast-companion-x86_64-linux-musl"
+checksum_globs = ["*.tar.gz", "*.zip"]
+sign = false
+
+[release.smoke]
+command = "nix run .#release-smoke --"

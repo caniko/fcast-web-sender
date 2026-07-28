@@ -1,0 +1,68 @@
+lockfileVersion: "9.0"
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+  .:
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  packages/bridge-types: {}
+
+  packages/extension-chromium:
+    dependencies:
+      "@fcast/bridge-types":
+        specifier: workspace:*
+        version: link:../bridge-types
+      "@fcast/extension-core":
+        specifier: workspace:*
+        version: link:../extension-core
+      "@fcast/extension-ui":
+        specifier: workspace:*
+        version: link:../extension-ui
+
+  packages/extension-content:
+    dependencies:
+      "@fcast/extension-core":
+        specifier: workspace:*
+        version: link:../extension-core
+
+  packages/extension-core:
+    dependencies:
+      "@fcast/bridge-types":
+        specifier: workspace:*
+        version: link:../bridge-types
+
+  packages/extension-firefox:
+    dependencies:
+      "@fcast/bridge-types":
+        specifier: workspace:*
+        version: link:../bridge-types
+      "@fcast/extension-core":
+        specifier: workspace:*
+        version: link:../extension-core
+      "@fcast/extension-ui":
+        specifier: workspace:*
+        version: link:../extension-ui
+
+  packages/extension-ui:
+    dependencies:
+      "@fcast/extension-core":
+        specifier: workspace:*
+        version: link:../extension-core
+
+packages:
+  typescript@5.9.3:
+    resolution:
+      {
+        integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==,
+      }
+    engines: { node: ">=14.17" }
+    hasBin: true
+
+snapshots:
+  typescript@5.9.3: {}
