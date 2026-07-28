@@ -71,11 +71,10 @@
 
       frontendSrc = lib.cleanSourceWith {
         src = ./.;
-        filter = path: type:
-          let
-            name = baseNameOf path;
-          in
-            !builtins.elem name [".git" "dist" "node_modules" "target"];
+        filter = path: type: let
+          name = baseNameOf path;
+        in
+          !builtins.elem name [".git" "dist" "node_modules" "target"];
       };
 
       frontendPackage = pkgs.stdenvNoCC.mkDerivation {
@@ -218,10 +217,11 @@
         default = crossPackages.${pname};
         formatting = treefmtEval.config.build.check self;
         fmt = craneLib.cargoFmt {src = rustSrc;};
-        clippy = craneLib.cargoClippy (commonArgs // {
-          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-          cargoClippyExtraArgs = "--workspace --all-targets --all-features -- --deny warnings";
-        });
+        clippy = craneLib.cargoClippy (commonArgs
+          // {
+            cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+            cargoClippyExtraArgs = "--workspace --all-targets --all-features -- --deny warnings";
+          });
         extensions = frontendPackage;
       };
 
