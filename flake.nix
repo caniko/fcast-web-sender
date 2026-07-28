@@ -46,8 +46,13 @@
       version = "0.1.0";
       pname = "fcast-companion";
 
-      toolchain = rs-harbor.lib.mkToolchain {inherit pkgs;};
-      inherit (toolchain) craneLib buildCache;
+      # GitHub Actions is a public runner. Keep the hosted checks and release
+      # build independent of canix's private sccache transport.
+      toolchain = rs-harbor.lib.mkToolchain {
+        inherit pkgs;
+        cache.enable = false;
+      };
+      inherit (toolchain) craneLib;
       rustToolchain = toolchain.rustToolchain;
       cross = rs-harbor.lib.mkCross {inherit pkgs system;};
       rustSrc = craneLib.cleanCargoSource ./.;
@@ -58,8 +63,9 @@
       };
 
       crossPackages = rs-harbor.lib.mkCrossPackages {
-        inherit pkgs cross pname commonArgs buildCache;
+        inherit pkgs cross pname commonArgs;
         inherit craneLib;
+        buildCache = null;
         targets =
           ["native" "aarch64-linux" "windows" "darwin-x86_64" "darwin-aarch64"]
           ++ lib.optional (system == "x86_64-linux") "x86_64-linux-musl";
