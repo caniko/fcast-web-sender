@@ -94,7 +94,7 @@
           inherit version;
           src = frontendSrc;
           fetcherVersion = 4;
-          hash = lib.fakeHash;
+          hash = "sha256-aBPpwIHTwd/MzphMs/9zQn7X0OqHsYcMlssfCbJ7YL0=";
         };
         buildPhase = "pnpm check && pnpm package";
         installPhase = ''
