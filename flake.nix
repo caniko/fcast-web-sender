@@ -94,7 +94,7 @@
           pname = "fcast-web-sender-node-deps";
           inherit version;
           src = frontendSrc;
-          fetcherVersion = 3;
+          fetcherVersion = 4;
           hash = lib.fakeHash;
         };
         buildPhase = "pnpm check && pnpm package";
