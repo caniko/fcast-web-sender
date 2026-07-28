@@ -96,7 +96,10 @@
           fetcherVersion = 4;
           hash = "sha256-aBPpwIHTwd/MzphMs/9zQn7X0OqHsYcMlssfCbJ7YL0=";
         };
-        buildPhase = "pnpm check && pnpm package";
+        buildPhase = ''
+          export PATH="${pkgs.esbuild}/bin:$PATH"
+          pnpm check && pnpm package
+        '';
         installPhase = ''
           set -euo pipefail
           mkdir -p "$out/extensions"
