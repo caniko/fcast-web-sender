@@ -30,14 +30,16 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+            max-jobs = 1
+            cores = 2
             substituters = https://attic.candee.baby/canix https://cache.nixos.org
             trusted-public-keys = canix:lPzPzKrmYqW5Rxa5r0uQWvCqD3S5nx0h2eCy7XD5JM8= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 
       - name: Validate tag
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME:-${FORGE_REF_NAME:-${CODEBERG_REF_NAME:-}}}"
-          if [ -z "$VERSION" ]; then ref="${GITHUB_REF:-${FORGE_REF:-${CODEBERG_REF:-}}}"; VERSION="${ref#refs/tags/}"; fi
+          VERSION="${GITHUB_REF_NAME:-${FORGE_REF_NAME:-${FORGEJO_REF_NAME:-}}}"
+          if [ -z "$VERSION" ]; then ref="${GITHUB_REF:-${FORGE_REF:-${FORGEJO_REF:-}}}"; VERSION="${ref#refs/tags/}"; fi
           echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta|alpha)\.[0-9]+)?$'
           git fetch --force --tags origin "refs/tags/${VERSION}:refs/tags/${VERSION}"
           tag_worktree="$(mktemp -d)"
@@ -86,7 +88,12 @@ jobs:
           . ./release-env
           export VERSION IS_PRERELEASE
           mkdir -p release
+          df -h /
+          free_kib="$(df -Pk / | awk 'NR == 2 { print $4 }')"
+          test "$free_kib" -ge 8388608 || { echo "GitHub runner has less than 8 GiB free before Nix realization" >&2; exit 1; }
           mkdir -p target
+          echo 'disk before bundle release-bundle'
+          df -h /
           nix build '.#release-bundle' --out-link 'target/simit-release-bundle-0'
           test -d 'target/simit-release-bundle-0'
           while IFS= read -r file; do
@@ -94,10 +101,17 @@ jobs:
             test ! -e "release/$name" || { echo "release bundle asset collision: $name" >&2; exit 1; }
             cp -L "$file" "release/$name"
           done < <(find -L 'target/simit-release-bundle-0' -mindepth 1 -maxdepth 1 -type f -print | LC_ALL=C sort)
+          echo 'disk after bundle release-bundle'
+          df -h /
           shopt -s nullglob
           manifests=(release/*-release-manifest.json)
           test "${#manifests[@]}" -eq 1 || { echo "expected exactly one release manifest from Nix bundles" >&2; exit 1; }
           jq -e --arg version "$VERSION" '(.schemaVersion == 2) and (.version == $version) and (.artifacts | length > 0)' "${manifests[0]}" >/dev/null
+          rm -f target/simit-release-bundle-*
+          nix store gc
+          df -h /
+          free_kib="$(df -Pk / | awk 'NR == 2 { print $4 }')"
+          test "$free_kib" -ge 2097152 || { echo "GitHub runner has less than 2 GiB free before release publication" >&2; exit 1; }
       - name: Generate release checksums
         run: |
           set -euo pipefail
@@ -154,13 +168,15 @@ jobs:
           add_matches() { local pattern="$1" match; while IFS= read -r match; do files+=("$match"); done < <(compgen -G "$pattern" || true); }
           add_matches 'release/SHA256SUMS.txt'
           add_matches 'release/SHA256SUMS.txt.minisig'
+          add_matches 'release/*.cosign.bundle'
+          add_matches 'release/*.intoto.bundle'
           add_matches 'release/*.tar.gz'
           add_matches 'release/*.zip'
           while IFS= read -r file; do
             [ -f "$file" ] || continue
             name=$(basename "$file")
             asset_id=$(curl -sS --fail -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' "$GITHUB_API/repos/$GITHUB_REPO/releases/$release_id/assets" | jq -r --arg name "$name" '.[] | select(.name == $name) | .id' | head -n 1)
-            if [ -n "$asset_id" ]; then curl -sS --fail -X DELETE -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' "$GITHUB_API/repos/$GITHUB_REPO/releases/$release_id/assets/$asset_id"; fi
+            if [ -n "$asset_id" ]; then curl -sS --fail -X DELETE -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' "$GITHUB_API/repos/$GITHUB_REPO/releases/assets/$asset_id"; fi
             curl -sS --fail -H "Authorization: Bearer $GITHUB_TOKEN" -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/octet-stream' --data-binary "@$file" "$upload_url?name=$name" > /dev/null
           done < <(printf '%s\n' "${files[@]}" | LC_ALL=C sort -u)
           SCRIPT

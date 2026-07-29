@@ -5,7 +5,7 @@ scope = "hooks-only"
 provider = "actions"
 platform = "github"
 runtime = "nix"
-runner = "ubuntu-latest"
+runner = "ubuntu-24.04"
 workspace = true
 workspace_strategy = "aggregate"
 
