@@ -99,6 +99,9 @@ pub fn truncate(value: String, max_bytes: usize) -> String {
     if value.len() <= max_bytes {
         return value;
     }
+    if max_bytes <= 3 {
+        return ".".repeat(max_bytes);
+    }
     let mut end = max_bytes.saturating_sub(3);
     while end > 0 && !value.is_char_boundary(end) {
         end -= 1;
@@ -132,5 +135,12 @@ mod tests {
     fn warnings_are_bounded() {
         let snapshot = DiagnosticSnapshot::new(0, 0, 0).warning("x".repeat(300));
         assert!(snapshot.warnings[0].len() <= 256);
+    }
+
+    #[test]
+    fn truncation_respects_every_small_byte_limit() {
+        for max_bytes in 0..=6 {
+            assert!(truncate("éééé".into(), max_bytes).len() <= max_bytes);
+        }
     }
 }

@@ -20,9 +20,9 @@ function pathAllowed(path: DeliveryPath, input: ResolverInput): boolean {
   if (!media || media.encrypted) return false;
   switch (path) {
     case "direct":
-      return capabilities.direct && media.kind === "direct-url" && Boolean(media.url) && !media.requiresCredentials;
+      return capabilities.direct && ["direct-url", "hls", "dash"].includes(media.kind) && Boolean(media.url) && !media.requiresCredentials;
     case "fcompanion":
-      return capabilities.fcompanion && Boolean(media.url) && (media.requiresCredentials || media.kind === "hls" || media.kind === "dash");
+      return capabilities.fcompanion && Boolean(media.url) && media.requiresCredentials;
     case "element-capture":
       return capabilities.elementCapture && input.captureAuthorized !== false;
     case "tab-mirroring":

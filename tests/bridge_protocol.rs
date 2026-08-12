@@ -8,9 +8,9 @@ fn bridge_hello_is_a_control_only_response() {
         Request::parse(br#"{"v":1,"id":"integration-1","method":"bridge.hello","params":{}}"#)
             .unwrap();
     let response = dispatch(&mut BridgeState::new(), &request);
-    assert!(response.ok);
-    assert_eq!(response.v, 1);
-    let result = response.result.unwrap();
+    assert!(response.is_ok());
+    assert_eq!(response.version(), 1);
+    let result = response.result().unwrap();
     assert_eq!(result["protocolVersion"], json!(1));
     assert!(
         result["capabilities"]

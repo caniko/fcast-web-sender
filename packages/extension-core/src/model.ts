@@ -4,6 +4,7 @@ export type ReceiverConnectionState =
   | "discovered"
   | "trustRequired"
   | "connecting"
+  | "reconnecting"
   | "connected"
   | "disconnected"
   | "mismatch";
@@ -18,6 +19,7 @@ export type SessionState =
   | "seeking"
   | "stopping"
   | "stopped"
+  | "ended"
   | "failed";
 
 export type CandidateKind =

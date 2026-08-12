@@ -4,7 +4,7 @@ use fcast_manifest_rewriter::{RewriteError, rewrite_dash, rewrite_hls};
 use reqwest::Client;
 use reqwest::header::{HeaderName, HeaderValue};
 use reqwest::redirect::Policy;
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
@@ -16,6 +16,7 @@ const DEFAULT_MAX_RESOURCE_BYTES: usize = 64 * 1024 * 1024;
 static FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum FetchError {
     #[error("media URL rejected by policy: {0}")]
     RejectedUrl(String),
@@ -121,12 +122,22 @@ impl MediaFetcher {
             .and_then(|value| value.to_str().ok())
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| response_content_type(url));
-        let bytes = response.bytes().await?;
-        if bytes.len() > self.policy.max_manifest_bytes {
-            return Err(FetchError::TooLarge {
-                actual: bytes.len() as u64,
-                maximum: self.policy.max_manifest_bytes,
-            });
+        let mut response = response;
+        let mut bytes = Vec::with_capacity(
+            response
+                .content_length()
+                .unwrap_or_default()
+                .min(self.policy.max_manifest_bytes as u64) as usize,
+        );
+        while let Some(chunk) = response.chunk().await? {
+            let actual = bytes.len().saturating_add(chunk.len());
+            if actual > self.policy.max_manifest_bytes {
+                return Err(FetchError::TooLarge {
+                    actual: actual as u64,
+                    maximum: self.policy.max_manifest_bytes,
+                });
+            }
+            bytes.extend_from_slice(&chunk);
         }
         let body = String::from_utf8_lossy(&bytes).into_owned();
         Ok((content_type, body))
@@ -146,6 +157,11 @@ impl MediaFetcher {
             if sensitive && !allow_sensitive_headers {
                 return Err(FetchError::InvalidHeader(format!(
                     "sensitive header '{name}' requires an explicit credential lease"
+                )));
+            }
+            if sensitive && url.scheme() != "https" {
+                return Err(FetchError::InvalidHeader(format!(
+                    "sensitive header '{name}' requires HTTPS"
                 )));
             }
             if !sensitive
@@ -255,6 +271,7 @@ impl MediaFetcher {
                 )
             })?;
         Client::builder()
+            .no_proxy()
             .redirect(Policy::none())
             .user_agent("fcast-web-sender/0.1")
             .resolve(host, SocketAddr::new(address.ip(), port))
@@ -320,34 +337,53 @@ fn response_content_type(url: &Url) -> String {
 
 fn is_private_or_local(address: IpAddr) -> bool {
     match address {
-        IpAddr::V4(address) => {
-            address.is_private()
-                || address.is_loopback()
-                || address.is_link_local()
-                || address.is_unspecified()
-                || address.is_broadcast()
-                || address.is_multicast()
-                || address.octets()[0] == 100 && (64..=127).contains(&address.octets()[1])
-                || address.octets()[0] == 192
-                    && address.octets()[1] == 0
-                    && address.octets()[2] == 0
-        }
+        IpAddr::V4(address) => is_non_global_v4(address),
         IpAddr::V6(address) => {
-            address.is_loopback()
+            let segments = address.segments();
+            address
+                .to_ipv4_mapped()
+                .is_some_and(|address| is_private_or_local(IpAddr::V4(address)))
+                || address.is_loopback()
                 || address.is_unspecified()
                 || address.is_multicast()
-                || is_unique_local_v6(address)
-                || is_link_local_v6(address)
+                || address.octets()[..12] == [0; 12]
+                || segments[..4] == [0x0100, 0, 0, 0]
+                || (segments[0] & 0xfe00) == 0xfc00
+                || (segments[0] & 0xffc0) == 0xfe80
+                || (segments[0] & 0xffc0) == 0xfec0
+                || (segments[0] == 0x2001 && matches!(segments[1], 0x0db8 | 0x0002))
+                || (segments[0] == 0x2001 && segments[1] < 0x0200)
+                || segments[0] == 0x2002
+                || (segments[0] & 0xfff0) == 0x3ff0
+                || nat64_v4(address).is_some_and(is_non_global_v4)
         }
     }
 }
 
-fn is_unique_local_v6(address: Ipv6Addr) -> bool {
-    (address.segments()[0] & 0xfe00) == 0xfc00
+fn is_non_global_v4(address: Ipv4Addr) -> bool {
+    let [a, b, c, _] = address.octets();
+    a == 0
+        || a == 10
+        || a == 100 && (64..=127).contains(&b)
+        || a == 127
+        || a == 169 && b == 254
+        || a == 172 && (16..=31).contains(&b)
+        || a == 192 && b == 0 && c == 0
+        || a == 192 && b == 0 && c == 2
+        || a == 192 && b == 88 && c == 99
+        || a == 192 && b == 168
+        || a == 198 && (b == 18 || b == 19 || b == 51 && c == 100)
+        || a == 203 && b == 0 && c == 113
+        || a >= 224
 }
 
-fn is_link_local_v6(address: Ipv6Addr) -> bool {
-    (address.segments()[0] & 0xffc0) == 0xfe80
+fn nat64_v4(address: std::net::Ipv6Addr) -> Option<Ipv4Addr> {
+    let octets = address.octets();
+    let well_known = octets[..12] == [0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0];
+    if octets[..6] == [0x00, 0x64, 0xff, 0x9b, 0x00, 0x01] {
+        return Some(Ipv4Addr::UNSPECIFIED);
+    }
+    well_known.then(|| Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]))
 }
 
 #[cfg(test)]
@@ -372,6 +408,28 @@ mod tests {
                 .validate(&Url::parse("https://media.example/video.m3u8").unwrap())
                 .is_ok()
         );
+        assert!(is_private_or_local(IpAddr::V6(
+            "::ffff:127.0.0.1".parse().unwrap()
+        )));
+        for address in [
+            "0.0.0.1",
+            "100.64.0.1",
+            "192.0.2.1",
+            "198.18.0.1",
+            "224.0.0.1",
+            "2001:db8::1",
+            "fe80::1",
+            "ff02::1",
+            "::2",
+            "100::1",
+            "2002:7f00:1::",
+            "2002:a00:1::",
+        ] {
+            assert!(is_private_or_local(address.parse().unwrap()), "{address}");
+        }
+        for address in ["8.8.8.8", "2606:4700:4700::1111"] {
+            assert!(!is_private_or_local(address.parse().unwrap()), "{address}");
+        }
     }
 
     #[test]

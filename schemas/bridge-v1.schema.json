@@ -16,7 +16,8 @@
         "receiver.connect", "receiver.disconnect", "receiver.trust",
         "receiver.forget", "session.load", "session.control",
         "session.selectTrack", "session.close", "companion.register",
-        "companion.unregister", "mirror.negotiate"
+        "companion.unregister", "credentialLease.create",
+        "credentialLease.revoke", "mirror.negotiate"
       ]
     },
     "params": { "type": "object", "maxProperties": 64 }

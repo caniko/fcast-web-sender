@@ -14,6 +14,12 @@ No method accepts media bytes. FCompanion requests carry only control metadata;
 the companion gives the pinned SDK an expiring, session-owned local file lease,
 and the SDK serves receiver range requests through its FCast provider.
 
+Credential headers cannot be included directly in `session.load`. The
+extension first calls `credentialLease.create` with an HTTPS URL, trusted
+receiver, and bounded Cookie or Authorization headers. The returned opaque ID
+may be used once by `session.load`; `credentialLease.revoke` discards an unused
+lease.
+
 The event stream reports receiver connection state, playback state, progress,
 volume, speed, available tracks, track selections, and bounded warnings. Track
 selection is a control request (`session.selectTrack`) with a session id, track

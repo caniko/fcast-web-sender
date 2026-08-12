@@ -1,6 +1,6 @@
 import { renderPopup } from "@fcast/extension-ui";
 import { resolveDeliveryPath } from "@fcast/extension-core";
-import { bridgeCall, currentState, injectDetector } from "./browser.js";
+import { acquireCredentialLease, bridgeCall, currentState, injectDetector } from "./browser.js";
 
 declare const browser: { tabs: { query(queryInfo: { active: boolean; currentWindow: boolean }): Promise<Array<{ id?: number }>> } };
 
@@ -12,14 +12,20 @@ if (root) {
     await bridgeCall("discovery.start", {});
     await bridgeCall("receiver.list", {});
     const state = currentState();
-    renderPopup(root, Object.values(state.receivers), Object.values(state.candidates), Object.values(state.sessions), {
-      trustReceiver: (receiver) => {
-        if (receiver.fingerprint) void bridgeCall("receiver.trust", { receiverId: receiver.id, fingerprint: receiver.fingerprint });
-      },
+    const candidates = Object.values(state.candidates).filter((candidate) => candidate.tabId === tab?.id);
+    renderPopup(root, Object.values(state.receivers), candidates, Object.values(state.sessions), {
+      trustReceiver: (receiver, fingerprint) => void bridgeCall("receiver.trust", { receiverId: receiver.id, fingerprint }),
       castCandidate: async (candidate, receiver) => {
         if (!candidate.url) return;
+        const credentialLeaseId = candidate.requiresCredentials
+          ? await acquireCredentialLease(candidate.tabId ?? tab?.id ?? -1, receiver.id, candidate.url)
+          : undefined;
+        if (credentialLeaseId && (candidate.kind === "hls" || candidate.kind === "dash")) {
+          await bridgeCall("credentialLease.revoke", { credentialLeaseId });
+          throw new Error("Authenticated adaptive streams require dynamic FCompanion resources, which this companion SDK does not support");
+        }
         const decision = resolveDeliveryPath({
-          media: candidate,
+          media: { ...candidate, requiresCredentials: Boolean(credentialLeaseId) },
           capabilities: { direct: true, fcompanion: true, elementCapture: false, tabMirroring: false },
         });
         if (decision.path !== "direct" && decision.path !== "fcompanion") return;
@@ -30,6 +36,7 @@ if (root) {
           title: candidate.title ?? "",
           contentType: candidate.mimeType ?? "",
           mode: decision.path,
+          ...(credentialLeaseId ? { credentialLeaseId } : {}),
         });
         await refresh();
       },

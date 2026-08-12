@@ -4,10 +4,10 @@
 //! bridge carries opaque resource metadata and tokens, while media bytes stay
 //! on the local HTTP connection to the receiver.
 
-use sha2::{Digest, Sha256};
+use rand::random;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -18,6 +18,7 @@ const DEFAULT_TTL: Duration = Duration::from_secs(15 * 60);
 const DEFAULT_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum CompanionError {
     #[error("resource is {actual} bytes; maximum is {maximum}")]
     TooLarge { actual: usize, maximum: usize },
@@ -27,6 +28,8 @@ pub enum CompanionError {
     NotFound,
     #[error("companion URL is not a loopback HTTP URL")]
     InvalidBaseUrl,
+    #[error("resource expiry is outside the supported clock range")]
+    ExpiryOverflow,
     #[error("companion HTTP I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -45,7 +48,6 @@ pub struct ResourceStore {
     ttl: Duration,
     max_bytes: usize,
     resources: BTreeMap<String, Resource>,
-    nonce: u64,
 }
 
 impl ResourceStore {
@@ -56,7 +58,6 @@ impl ResourceStore {
             ttl: DEFAULT_TTL,
             max_bytes: DEFAULT_MAX_BYTES,
             resources: BTreeMap::new(),
-            nonce: 0,
         })
     }
 
@@ -71,7 +72,6 @@ impl ResourceStore {
             ttl,
             max_bytes,
             resources: BTreeMap::new(),
-            nonce: 0,
         })
     }
 
@@ -95,20 +95,21 @@ impl ResourceStore {
         {
             return Err(CompanionError::InvalidContentType);
         }
-        self.nonce = self.nonce.wrapping_add(1);
-        let mut hasher = Sha256::new();
-        hasher.update(std::process::id().to_be_bytes());
-        hasher.update(self.nonce.to_be_bytes());
-        hasher.update(now_millis().to_be_bytes());
-        hasher.update(&bytes[..bytes.len().min(64)]);
-        let token = hex::encode(hasher.finalize());
+        let token = loop {
+            let candidate = hex::encode(random::<[u8; 32]>());
+            if !self.resources.contains_key(&candidate) {
+                break candidate;
+            }
+        };
         self.resources.insert(
             token.clone(),
             Resource {
                 token: token.clone(),
                 content_type: content_type.into(),
                 bytes,
-                expires_at: SystemTime::now() + self.ttl,
+                expires_at: SystemTime::now()
+                    .checked_add(self.ttl)
+                    .ok_or(CompanionError::ExpiryOverflow)?,
             },
         );
         Ok(token)
@@ -327,13 +328,6 @@ fn validate_base_url(url: &Url) -> Result<(), CompanionError> {
         return Err(CompanionError::InvalidBaseUrl);
     }
     Ok(())
-}
-
-fn now_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
 }
 
 #[cfg(test)]

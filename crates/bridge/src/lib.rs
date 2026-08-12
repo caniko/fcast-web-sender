@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, Read, Write};
 use thiserror::Error;
 
@@ -13,9 +13,11 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_FRAME_BYTES: usize = 1_048_576;
 pub const MAX_ID_BYTES: usize = 128;
 pub const MAX_STRING_BYTES: usize = 16 * 1024;
+pub const MAX_PARAMS_ITEMS: usize = 64;
 pub const MAX_COLLECTION_ITEMS: usize = 128;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum FrameError {
     #[error("native-messaging frame header was truncated")]
     TruncatedHeader,
@@ -28,6 +30,7 @@ pub enum FrameError {
 }
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ProtocolError {
     #[error("invalid JSON request: {0}")]
     Json(#[from] serde_json::Error),
@@ -46,6 +49,7 @@ pub enum ProtocolError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Request {
     pub v: u32,
     pub id: String,
@@ -68,7 +72,15 @@ impl Request {
         if !generated::GENERATED_BRIDGE_METHODS.contains(&request.method.as_str()) {
             return Err(ProtocolError::UnknownMethod(request.method));
         }
-        validate_json(&Value::Object(request.params.clone()), 0)?;
+        if request.params.len() > MAX_PARAMS_ITEMS {
+            return Err(ProtocolError::ValueLimit(format!(
+                "params exceeds {MAX_PARAMS_ITEMS} properties"
+            )));
+        }
+        request.params.iter().try_for_each(|(key, value)| {
+            validate_object_key(key)?;
+            validate_json(value, 1)
+        })?;
         Ok(request)
     }
 
@@ -81,17 +93,71 @@ impl Request {
                 BridgeError::InvalidParams(format!("'{name}' must be a non-empty string"))
             })
     }
+
+    pub fn session_control(&self) -> Result<SessionControl, BridgeError> {
+        match self.param_string("action")? {
+            "play" => Ok(SessionControl::Play),
+            "resume" => Ok(SessionControl::Resume),
+            "pause" => Ok(SessionControl::Pause),
+            "stop" => Ok(SessionControl::Stop),
+            "seek" => self
+                .params
+                .get("positionMs")
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite() && *value >= 0.0)
+                .map(SessionControl::Seek)
+                .ok_or_else(|| {
+                    BridgeError::InvalidParams(
+                        "'positionMs' must be a non-negative finite number".into(),
+                    )
+                }),
+            "volume" => self
+                .params
+                .get("level")
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
+                .map(SessionControl::Volume)
+                .ok_or_else(|| {
+                    BridgeError::InvalidParams(
+                        "'level' must be a finite number between 0 and 1".into(),
+                    )
+                }),
+            "speed" => self
+                .params
+                .get("speed")
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite() && (0.25..=4.0).contains(value))
+                .map(SessionControl::Speed)
+                .ok_or_else(|| {
+                    BridgeError::InvalidParams(
+                        "'speed' must be a finite number between 0.25 and 4".into(),
+                    )
+                }),
+            _ => Err(BridgeError::InvalidParams("unknown session action".into())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SessionControl {
+    Play,
+    Resume,
+    Pause,
+    Stop,
+    Seek(f64),
+    Volume(f64),
+    Speed(f64),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Response {
-    pub v: u32,
-    pub id: String,
-    pub ok: bool,
+    v: u32,
+    id: String,
+    ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
+    result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<ResponseError>,
+    error: Option<ResponseError>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -120,19 +186,46 @@ impl Response {
 
     pub fn failure(id: impl Into<String>, error: BridgeError) -> Self {
         let code = error.code().to_owned();
-        Self {
-            v: PROTOCOL_VERSION,
-            id: id.into(),
-            ok: false,
-            result: None,
-            error: Some(ResponseError {
+        Self::failure_with(
+            id,
+            ResponseError {
                 code,
                 message: error.to_string(),
                 recoverable: false,
                 suggested_next_mode: None,
                 details: None,
-            }),
+            },
+        )
+    }
+
+    pub fn failure_with(id: impl Into<String>, error: ResponseError) -> Self {
+        Self {
+            v: PROTOCOL_VERSION,
+            id: id.into(),
+            ok: false,
+            result: None,
+            error: Some(error),
         }
+    }
+
+    pub fn version(&self) -> u32 {
+        self.v
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn is_ok(&self) -> bool {
+        self.ok
+    }
+
+    pub fn result(&self) -> Option<&Value> {
+        self.result.as_ref()
+    }
+
+    pub fn error(&self) -> Option<&ResponseError> {
+        self.error.as_ref()
     }
 }
 
@@ -189,6 +282,7 @@ pub enum SessionState {
 }
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum BridgeError {
     #[error("unknown bridge method '{0}'")]
     UnknownMethod(String),
@@ -224,15 +318,20 @@ fn validate_json(value: &Value, depth: usize) -> Result<(), ProtocolError> {
             .iter()
             .try_for_each(|value| validate_json(value, depth + 1)),
         Value::Object(values) => values.iter().try_for_each(|(key, value)| {
-            if key.len() > MAX_STRING_BYTES {
-                return Err(ProtocolError::ValueLimit(format!(
-                    "object key exceeds {MAX_STRING_BYTES} bytes"
-                )));
-            }
+            validate_object_key(key)?;
             validate_json(value, depth + 1)
         }),
         _ => Ok(()),
     }
+}
+
+fn validate_object_key(key: &str) -> Result<(), ProtocolError> {
+    if key.len() > MAX_STRING_BYTES {
+        return Err(ProtocolError::ValueLimit(format!(
+            "object key exceeds {MAX_STRING_BYTES} bytes"
+        )));
+    }
+    Ok(())
 }
 
 impl BridgeError {
@@ -254,8 +353,8 @@ pub struct BridgeState {
     pub discovery_running: bool,
     pub receivers: BTreeMap<String, ReceiverSummary>,
     pub sessions: BTreeMap<String, SessionSummary>,
-    pub trusted_fingerprints: BTreeSet<String>,
     pub companion_port: Option<u16>,
+    warnings: VecDeque<String>,
 }
 
 impl BridgeState {
@@ -265,8 +364,8 @@ impl BridgeState {
             discovery_running: false,
             receivers: BTreeMap::new(),
             sessions: BTreeMap::new(),
-            trusted_fingerprints: BTreeSet::new(),
             companion_port: None,
+            warnings: VecDeque::new(),
         }
     }
 
@@ -282,6 +381,26 @@ impl BridgeState {
             "sessions": self.sessions.len(),
             "companionPort": self.companion_port,
         })
+    }
+
+    pub fn warning(&mut self, warning: impl Into<String>) {
+        let mut warning = warning.into();
+        if warning.len() > 256 {
+            let mut end = 253;
+            while !warning.is_char_boundary(end) {
+                end -= 1;
+            }
+            warning.truncate(end);
+            warning.push_str("...");
+        }
+        if self.warnings.len() == 32 {
+            self.warnings.pop_front();
+        }
+        self.warnings.push_back(warning);
+    }
+
+    pub fn warnings(&self) -> impl Iterator<Item = &str> {
+        self.warnings.iter().map(String::as_str)
     }
 }
 
@@ -305,7 +424,7 @@ fn dispatch_inner(state: &mut BridgeState, request: &Request) -> Result<Value, B
             "bridgeVersion": env!("CARGO_PKG_VERSION"),
             "capabilities": [
                 "discovery", "receiverTrust", "directFcast", "fcompanion",
-                "diagnostics", "controlOnlyNativeMessaging"
+                "credentialLeases", "diagnostics", "controlOnlyNativeMessaging"
             ],
             "limits": {"maxFrameBytes": MAX_FRAME_BYTES}
         })),
@@ -352,7 +471,6 @@ fn dispatch_inner(state: &mut BridgeState, request: &Request) -> Result<Value, B
                 .ok_or_else(|| BridgeError::ReceiverNotFound(receiver_id.clone()))?;
             receiver.fingerprint = Some(fingerprint.clone());
             receiver.trusted = true;
-            state.trusted_fingerprints.insert(fingerprint);
             Ok(json!({"receiverId": receiver.id, "trusted": true}))
         }
         "receiver.forget" => {
@@ -361,9 +479,7 @@ fn dispatch_inner(state: &mut BridgeState, request: &Request) -> Result<Value, B
                 .receivers
                 .get_mut(&receiver_id)
                 .ok_or_else(|| BridgeError::ReceiverNotFound(receiver_id.clone()))?;
-            if let Some(fingerprint) = receiver.fingerprint.take() {
-                state.trusted_fingerprints.remove(&fingerprint);
-            }
+            receiver.fingerprint = None;
             receiver.trusted = false;
             Ok(json!({"receiverId": receiver.id, "trusted": false}))
         }
@@ -394,56 +510,21 @@ fn dispatch_inner(state: &mut BridgeState, request: &Request) -> Result<Value, B
             Ok(json!({"sessionId": session_id, "state": "loading"}))
         }
         "session.control" => {
+            let control = request.session_control()?;
             let session_id = request.param_string("sessionId")?.to_owned();
-            let action = request.param_string("action")?;
             let session = state
                 .sessions
                 .get_mut(&session_id)
                 .ok_or_else(|| BridgeError::SessionNotFound(session_id.clone()))?;
-            match action {
-                "play" | "resume" => session.state = SessionState::Playing,
-                "pause" => session.state = SessionState::Paused,
-                "stop" => session.state = SessionState::Stopped,
-                "seek" => {
-                    let position = request
-                        .params
-                        .get("positionMs")
-                        .and_then(Value::as_f64)
-                        .filter(|value| value.is_finite() && *value >= 0.0)
-                        .ok_or_else(|| {
-                            BridgeError::InvalidParams(
-                                "'positionMs' must be a non-negative finite number".into(),
-                            )
-                        })?;
-                    session.position_ms = position;
+            match control {
+                SessionControl::Play | SessionControl::Resume => {
+                    session.state = SessionState::Playing
                 }
-                "volume" => {
-                    let volume = request
-                        .params
-                        .get("level")
-                        .and_then(Value::as_f64)
-                        .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
-                        .ok_or_else(|| {
-                            BridgeError::InvalidParams(
-                                "'level' must be a finite number between 0 and 1".into(),
-                            )
-                        })?;
-                    session.volume = volume;
-                }
-                "speed" => {
-                    let speed = request
-                        .params
-                        .get("speed")
-                        .and_then(Value::as_f64)
-                        .filter(|value| value.is_finite() && (0.25..=4.0).contains(value))
-                        .ok_or_else(|| {
-                            BridgeError::InvalidParams(
-                                "'speed' must be a finite number between 0.25 and 4".into(),
-                            )
-                        })?;
-                    session.speed = speed;
-                }
-                _ => return Err(BridgeError::InvalidParams("unknown session action".into())),
+                SessionControl::Pause => session.state = SessionState::Paused,
+                SessionControl::Stop => session.state = SessionState::Stopped,
+                SessionControl::Seek(position) => session.position_ms = position,
+                SessionControl::Volume(volume) => session.volume = volume,
+                SessionControl::Speed(speed) => session.speed = speed,
             }
             session.revision = session.revision.saturating_add(1);
             Ok(json!({
@@ -476,7 +557,7 @@ fn dispatch_inner(state: &mut BridgeState, request: &Request) -> Result<Value, B
                 .params
                 .get("port")
                 .and_then(Value::as_u64)
-                .filter(|port| *port <= u16::MAX as u64)
+                .filter(|port| (1..=u16::MAX as u64).contains(port))
                 .ok_or_else(|| {
                     BridgeError::InvalidParams("'port' must be a valid TCP port".into())
                 })?;
@@ -492,7 +573,7 @@ fn dispatch_inner(state: &mut BridgeState, request: &Request) -> Result<Value, B
             "uptimeMs": state.uptime_ms(),
             "receivers": state.receivers.len(),
             "sessions": state.sessions.len(),
-            "warnings": [],
+            "warnings": state.warnings().collect::<Vec<_>>(),
             "lastError": null
         })),
         "mirror.negotiate" => Err(BridgeError::Unsupported("mirror.negotiate".into())),
@@ -653,5 +734,72 @@ mod tests {
             Request::parse(&serde_json::to_vec(&too_large).unwrap()),
             Err(ProtocolError::ValueLimit(_))
         ));
+    }
+
+    #[test]
+    fn request_parser_rejects_unknown_fields_and_too_many_params() {
+        assert!(matches!(
+            Request::parse(br#"{"v":1,"id":"1","method":"bridge.hello","params":{},"extra":true}"#),
+            Err(ProtocolError::Json(_))
+        ));
+
+        let params: Map<String, Value> = (0..=MAX_PARAMS_ITEMS)
+            .map(|index| (format!("param{index}"), Value::Null))
+            .collect();
+        let request = json!({
+            "v": PROTOCOL_VERSION,
+            "id": "1",
+            "method": "bridge.hello",
+            "params": params,
+        });
+        assert!(matches!(
+            Request::parse(&serde_json::to_vec(&request).unwrap()),
+            Err(ProtocolError::ValueLimit(_))
+        ));
+
+        let nested: Map<String, Value> = (0..MAX_COLLECTION_ITEMS)
+            .map(|index| (format!("item{index}"), Value::Null))
+            .collect();
+        let request = json!({
+            "v": PROTOCOL_VERSION,
+            "id": "1",
+            "method": "bridge.hello",
+            "params": {"nested": nested},
+        });
+        assert!(Request::parse(&serde_json::to_vec(&request).unwrap()).is_ok());
+    }
+
+    #[test]
+    fn session_control_rejects_unknown_actions_and_invalid_values() {
+        for control in [
+            request("session.control", &[("action", json!("rewind"))]),
+            request(
+                "session.control",
+                &[("action", json!("seek")), ("positionMs", json!(-1))],
+            ),
+            request(
+                "session.control",
+                &[("action", json!("volume")), ("level", json!(1.1))],
+            ),
+            request(
+                "session.control",
+                &[("action", json!("speed")), ("speed", json!(0.1))],
+            ),
+        ] {
+            assert!(matches!(
+                control.session_control(),
+                Err(BridgeError::InvalidParams(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn companion_port_zero_is_rejected() {
+        let response = dispatch(
+            &mut BridgeState::new(),
+            &request("companion.register", &[("port", json!(0))]),
+        );
+        assert!(!response.is_ok());
+        assert_eq!(response.error().unwrap().code, "invalid_params");
     }
 }

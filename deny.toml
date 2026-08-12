@@ -15,4 +15,7 @@ wildcards = "allow"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+required-git-spec = "rev"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://gitlab.futo.org/videostreaming/fcast"]
+unused-allowed-source = "allow"

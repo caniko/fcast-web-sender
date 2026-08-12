@@ -28,6 +28,16 @@ function sourceUrl(element: HTMLMediaElement): string | undefined {
   return element.currentSrc || element.src || element.querySelector("source")?.src || undefined;
 }
 
+function needsCredentials(element: HTMLMediaElement, url: string | undefined): boolean {
+  if (element.crossOrigin === "use-credentials") return true;
+  if (!url) return false;
+  try {
+    return new URL(url, location.href).origin === location.origin;
+  } catch {
+    return false;
+  }
+}
+
 function probe(element: HTMLMediaElement): MediaProbe {
   const url = sourceUrl(element);
   return {
@@ -47,6 +57,7 @@ function probe(element: HTMLMediaElement): MediaProbe {
     lastInteractionAt: lastInteraction.get(element),
     encrypted: encrypted.has(element),
     live: !Number.isFinite(element.duration),
+    requiresCredentials: needsCredentials(element, url),
     observedAt: Date.now(),
   };
 }

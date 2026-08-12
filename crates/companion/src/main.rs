@@ -1,21 +1,39 @@
 use fcast_bridge::{
     BridgeState, ConnectionState, Event, ProtocolError, ReceiverSummary, Request, Response,
-    ResponseError, dispatch, read_frame, write_frame,
+    ResponseError, SessionControl, dispatch, read_frame, write_frame,
 };
 use fcast_client::{
     LoadRequest, ReceiverEndpoint,
-    upstream::{BrowserSignaller, DeviceHandle, UpstreamContext, UpstreamEvent},
+    upstream::{BrowserSignaller, DeviceHandle, TrackType, UpstreamContext, UpstreamEvent},
 };
 use fcast_discovery::{MdnsBrowser, SERVICE_NAME};
 use fcast_media_fetcher::{FetchedFile, MediaFetcher, UrlPolicy};
-use fcast_receiver_trust::{TrustStore, normalize_fingerprint};
+use fcast_receiver_trust::{Fingerprint, TrustStore};
+use rand::random;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::{self, stdin, stdout};
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use url::Url;
+
+const MAX_CREDENTIAL_LEASE_SECONDS: u64 = 300;
+const MAX_CREDENTIAL_HEADER_BYTES: usize = 16 * 1024;
+
+struct CredentialLease {
+    receiver_id: String,
+    fingerprint: String,
+    origin: String,
+    headers: Vec<(String, String)>,
+    expires_at: Instant,
+}
+
+#[derive(Default)]
+struct CredentialLeases {
+    leases: BTreeMap<String, CredentialLease>,
+}
 
 struct CompanionContext<'a> {
     state: &'a mut BridgeState,
@@ -28,6 +46,7 @@ struct CompanionContext<'a> {
     output: &'a Arc<Mutex<io::Stdout>>,
     mirrors: &'a mut BTreeMap<String, Arc<BrowserSignaller>>,
     next_mirror_id: &'a mut u16,
+    credential_leases: &'a mut CredentialLeases,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,6 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut files: BTreeMap<String, Vec<FetchedFile>> = BTreeMap::new();
     let mut mirrors: BTreeMap<String, Arc<BrowserSignaller>> = BTreeMap::new();
     let mut next_mirror_id = 1_u16;
+    let mut credential_leases = CredentialLeases::default();
 
     // Native Messaging requires stdout to contain framed JSON only. Runtime
     // diagnostics belong on stderr or in the explicit diagnostics method.
@@ -76,6 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     output: &output,
                     mirrors: &mut mirrors,
                     next_mirror_id: &mut next_mirror_id,
+                    credential_leases: &mut credential_leases,
                 };
                 handle_request(&mut context, &request)
             }
@@ -106,19 +127,15 @@ fn handle_request(context: &mut CompanionContext<'_>, request: &Request) -> Resp
             request,
         ),
         "receiver.disconnect" => disconnect_receiver(context.state, context.devices, request),
-        "session.load" => load_session(
-            context.state,
-            context.upstream,
-            context.devices,
-            context.runtime,
-            context.media_fetcher,
-            context.files,
-            request,
-        ),
+        "session.load" => load_session(context, request),
         "session.control" => control_session(context.state, context.devices, request),
         "session.selectTrack" => select_track(context.state, context.devices, request),
         "session.close" => close_session(context.state, context.files, request),
         "diagnostics.snapshot" => diagnostics_snapshot(context.state, request),
+        "credentialLease.create" => {
+            create_credential_lease(context.state, context.credential_leases, request)
+        }
+        "credentialLease.revoke" => revoke_credential_lease(context.credential_leases, request),
         "mirror.negotiate" => mirror_negotiate(
             context.state,
             context.upstream,
@@ -132,11 +149,171 @@ fn handle_request(context: &mut CompanionContext<'_>, request: &Request) -> Resp
     }
 }
 
+impl CredentialLeases {
+    fn insert(&mut self, lease: CredentialLease) -> String {
+        self.leases
+            .retain(|_, existing| existing.expires_at > Instant::now());
+        loop {
+            let id = hex::encode(random::<[u8; 32]>());
+            if let std::collections::btree_map::Entry::Vacant(entry) = self.leases.entry(id.clone())
+            {
+                entry.insert(lease);
+                return id;
+            }
+        }
+    }
+
+    fn claim(
+        &mut self,
+        id: &str,
+        receiver_id: &str,
+        fingerprint: Option<&str>,
+        url: &Url,
+    ) -> Result<Vec<(String, String)>, String> {
+        let lease = self
+            .leases
+            .get(id)
+            .ok_or_else(|| "credential lease was not found".to_owned())?;
+        if lease.expires_at <= Instant::now() {
+            self.leases.remove(id);
+            return Err("credential lease expired".into());
+        }
+        if lease.receiver_id != receiver_id || Some(lease.fingerprint.as_str()) != fingerprint {
+            return Err("credential lease is bound to another receiver".into());
+        }
+        if url.scheme() != "https" || lease.origin != url.origin().ascii_serialization() {
+            return Err("credential lease is bound to another HTTPS origin".into());
+        }
+        Ok(self
+            .leases
+            .remove(id)
+            .ok_or_else(|| "credential lease was already claimed".to_owned())?
+            .headers)
+    }
+}
+
+fn create_credential_lease(
+    state: &BridgeState,
+    leases: &mut CredentialLeases,
+    request: &Request,
+) -> Response {
+    let receiver_id = match request.param_string("receiverId") {
+        Ok(value) => value,
+        Err(error) => return Response::failure(&request.id, error),
+    };
+    let Some(receiver) = state.receivers.get(receiver_id) else {
+        return failure(&request.id, "receiver_not_found", receiver_id);
+    };
+    let Some(fingerprint) = receiver.fingerprint.as_deref().filter(|_| receiver.trusted) else {
+        return failure(
+            &request.id,
+            "receiver_not_trusted",
+            "credential leases require a trusted receiver",
+        );
+    };
+    let url = match request
+        .param_string("url")
+        .ok()
+        .and_then(|value| Url::parse(value).ok())
+        .filter(|url| url.scheme() == "https" && url.host_str().is_some())
+    {
+        Some(url) => url,
+        None => {
+            return failure(
+                &request.id,
+                "invalid_params",
+                "credential leases require an HTTPS URL",
+            );
+        }
+    };
+    let Some(raw_headers) = request.params.get("headers").and_then(Value::as_object) else {
+        return failure(
+            &request.id,
+            "invalid_params",
+            "credential lease headers must be an object",
+        );
+    };
+    if raw_headers.is_empty() || raw_headers.len() > 2 {
+        return failure(
+            &request.id,
+            "invalid_params",
+            "credential leases require one or two credential headers",
+        );
+    }
+    let mut headers = Vec::with_capacity(raw_headers.len());
+    for (name, value) in raw_headers {
+        if !matches!(
+            name.to_ascii_lowercase().as_str(),
+            "authorization" | "cookie"
+        ) {
+            return failure(
+                &request.id,
+                "invalid_params",
+                format!("credential header '{name}' is not allowed"),
+            );
+        }
+        let Some(value) = value.as_str().filter(|value| {
+            !value.is_empty()
+                && value.len() <= MAX_CREDENTIAL_HEADER_BYTES
+                && !value.contains(['\r', '\n'])
+        }) else {
+            return failure(
+                &request.id,
+                "invalid_params",
+                format!("credential header '{name}' is invalid or too large"),
+            );
+        };
+        headers.push((name.clone(), value.to_owned()));
+    }
+    let ttl_seconds = request
+        .params
+        .get("ttlSeconds")
+        .and_then(Value::as_u64)
+        .unwrap_or(60);
+    if !(1..=MAX_CREDENTIAL_LEASE_SECONDS).contains(&ttl_seconds) {
+        return failure(
+            &request.id,
+            "invalid_params",
+            format!("credential lease TTL must be between 1 and {MAX_CREDENTIAL_LEASE_SECONDS}"),
+        );
+    }
+    let Some(expires_at) = Instant::now().checked_add(Duration::from_secs(ttl_seconds)) else {
+        return failure(
+            &request.id,
+            "invalid_params",
+            "credential lease TTL overflowed",
+        );
+    };
+    let id = leases.insert(CredentialLease {
+        receiver_id: receiver_id.to_owned(),
+        fingerprint: fingerprint.to_owned(),
+        origin: url.origin().ascii_serialization(),
+        headers,
+        expires_at,
+    });
+    Response::success(
+        &request.id,
+        serde_json::json!({"credentialLeaseId": id, "expiresInSeconds": ttl_seconds}),
+    )
+}
+
+fn revoke_credential_lease(leases: &mut CredentialLeases, request: &Request) -> Response {
+    let id = match request.param_string("credentialLeaseId") {
+        Ok(value) => value,
+        Err(error) => return Response::failure(&request.id, error),
+    };
+    Response::success(
+        &request.id,
+        serde_json::json!({"revoked": leases.leases.remove(id).is_some()}),
+    )
+}
+
 fn discover_receivers(state: &mut BridgeState, trust_store: &TrustStore) {
     let browser = match MdnsBrowser::bind(Duration::from_millis(250)) {
         Ok(browser) => browser,
         Err(error) => {
             eprintln!("fcast-companion: discovery socket unavailable: {error}");
+            state.warning(format!("discovery socket unavailable: {error}"));
             return;
         }
     };
@@ -144,6 +321,7 @@ fn discover_receivers(state: &mut BridgeState, trust_store: &TrustStore) {
         Ok(records) => records,
         Err(error) => {
             eprintln!("fcast-companion: discovery failed: {error}");
+            state.warning(format!("discovery failed: {error}"));
             return;
         }
     };
@@ -154,10 +332,10 @@ fn discover_receivers(state: &mut BridgeState, trust_store: &TrustStore) {
         let name = record.display_name().to_owned();
         let fingerprint = record.txt.get("fp").and_then(|raw| {
             let raw = raw.strip_prefix("sha256/").unwrap_or(raw);
-            normalize_fingerprint(&format!("sha256/{raw}")).ok()
+            Fingerprint::try_from(format!("sha256/{raw}")).ok()
         });
         let trusted = fingerprint
-            .as_deref()
+            .as_ref()
             .is_some_and(|fingerprint| trust_store.is_trusted(fingerprint));
         state.receivers.insert(
             record.id.clone(),
@@ -166,7 +344,7 @@ fn discover_receivers(state: &mut BridgeState, trust_store: &TrustStore) {
                 name,
                 host: host.to_string(),
                 port: record.port,
-                fingerprint,
+                fingerprint: fingerprint.map(|value| value.to_string()),
                 connection_state: ConnectionState::Discovered,
                 trusted,
                 ttl_seconds: Some(record.ttl_seconds),
@@ -191,22 +369,37 @@ fn trust_receiver(
         Ok(value) => value,
         Err(error) => return Response::failure(&request.id, error),
     };
-    let fingerprint = match normalize_fingerprint(raw_fingerprint) {
+    let fingerprint = match Fingerprint::try_from(raw_fingerprint) {
         Ok(value) => value,
         Err(error) => return failure(&request.id, "invalid_fingerprint", error.to_string()),
     };
+    let discovered = state
+        .receivers
+        .get(receiver_id)
+        .and_then(|receiver| receiver.fingerprint.as_deref());
+    if discovered != Some(fingerprint.as_str()) {
+        return failure(
+            &request.id,
+            "fingerprint_mismatch",
+            "approved fingerprint does not match the discovered receiver",
+        );
+    }
     let label = request
         .params
         .get("label")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    if let Err(error) = trust_store.trust(&fingerprint, label, now_unix()) {
+    let now = match now_unix() {
+        Ok(now) => now,
+        Err(error) => return failure(&request.id, "clock", error.to_string()),
+    };
+    if let Err(error) = trust_store.trust(&fingerprint, label, now) {
         return failure(&request.id, "trust_store", error.to_string());
     }
     let mut normalized = request.clone();
     normalized
         .params
-        .insert("fingerprint".into(), Value::String(fingerprint));
+        .insert("fingerprint".into(), Value::String(fingerprint.to_string()));
     dispatch(state, &normalized)
 }
 
@@ -223,16 +416,15 @@ fn forget_receiver(
         .receivers
         .get(&receiver_id)
         .and_then(|receiver| receiver.fingerprint.clone());
-    let response = dispatch(state, request);
-    if !response.ok {
-        return response;
+    if !state.receivers.contains_key(&receiver_id) {
+        return dispatch(state, request);
     }
     if let Some(fingerprint) = fingerprint
         && let Err(error) = trust_store.forget(&fingerprint)
     {
         return failure(&request.id, "trust_store", error.to_string());
     }
-    response
+    dispatch(state, request)
 }
 
 fn connect_receiver(
@@ -315,7 +507,7 @@ fn connect_receiver(
     });
     let device = match upstream.connect_with_events(&endpoint, event_sink) {
         Ok(device) => device,
-        Err(error) => return failure(&request.id, "fcast_connect", error),
+        Err(error) => return failure(&request.id, "fcast_connect", error.to_string()),
     };
     devices.insert(receiver_id, device);
     dispatch(state, request)
@@ -330,23 +522,23 @@ fn disconnect_receiver(
         Ok(value) => value.to_owned(),
         Err(error) => return Response::failure(&request.id, error),
     };
-    if let Some(device) = devices.remove(&receiver_id)
-        && let Err(error) = device.disconnect()
-    {
-        return failure(&request.id, "fcast_disconnect", error.to_string());
+    if let Some(device) = devices.get(&receiver_id) {
+        if let Err(error) = device.disconnect() {
+            return failure(&request.id, "fcast_disconnect", error.to_string());
+        }
+        devices.remove(&receiver_id);
     }
     dispatch(state, request)
 }
 
-fn load_session(
-    state: &mut BridgeState,
-    upstream: &UpstreamContext,
-    devices: &BTreeMap<String, DeviceHandle>,
-    runtime: &tokio::runtime::Runtime,
-    media_fetcher: &MediaFetcher,
-    files: &mut BTreeMap<String, Vec<FetchedFile>>,
-    request: &Request,
-) -> Response {
+fn load_session(context: &mut CompanionContext<'_>, request: &Request) -> Response {
+    let state = &mut *context.state;
+    let upstream = context.upstream;
+    let devices = &*context.devices;
+    let runtime = context.runtime;
+    let media_fetcher = context.media_fetcher;
+    let files = &mut *context.files;
+    let credential_leases = &mut *context.credential_leases;
     let receiver_id = match request.param_string("receiverId") {
         Ok(value) => value.to_owned(),
         Err(error) => return Response::failure(&request.id, error),
@@ -391,20 +583,41 @@ fn load_session(
             return failure(&request.id, "media_url_unavailable", error.to_string());
         }
         if let Err(error) = upstream.load(device, &load) {
-            return failure(&request.id, "fcast_load", error);
+            return failure(&request.id, "fcast_load", error.to_string());
         }
         return dispatch(state, request);
     }
 
-    let headers = match request_headers(request) {
-        Ok(headers) => headers,
-        Err(error) => return failure(&request.id, "media_headers_invalid", error),
+    if request.params.contains_key("headers") || request.params.contains_key("credentialLease") {
+        return failure(
+            &request.id,
+            "media_headers_invalid",
+            "raw headers and boolean credential leases are not accepted",
+        );
+    }
+    let headers = match request.params.get("credentialLeaseId") {
+        Some(Value::String(lease_id)) => match credential_leases.claim(
+            lease_id,
+            &receiver_id,
+            state
+                .receivers
+                .get(&receiver_id)
+                .and_then(|receiver| receiver.fingerprint.as_deref()),
+            &source,
+        ) {
+            Ok(headers) => headers,
+            Err(error) => return failure(&request.id, "credential_lease_invalid", error),
+        },
+        Some(_) => {
+            return failure(
+                &request.id,
+                "credential_lease_invalid",
+                "'credentialLeaseId' must be a string",
+            );
+        }
+        None => Vec::new(),
     };
-    let allow_sensitive = request
-        .params
-        .get("credentialLease")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let allow_sensitive = !headers.is_empty();
     let file =
         match runtime.block_on(media_fetcher.fetch_to_file(&source, &headers, allow_sensitive)) {
             Ok(file) => file,
@@ -416,13 +629,12 @@ fn load_session(
         .unwrap_or(&file.content_type)
         .to_owned();
     if let Err(error) = upstream.load_file(device, &load, file.path(), &content_type) {
-        return failure(&request.id, "fcast_load", error);
+        return failure(&request.id, "fcast_load", error.to_string());
     }
     let response = dispatch(state, request);
-    if response.ok
+    if response.is_ok()
         && let Some(session_id) = response
-            .result
-            .as_ref()
+            .result()
             .and_then(|result| result.get("sessionId"))
             .and_then(Value::as_str)
     {
@@ -441,31 +653,10 @@ fn close_session(
         Err(error) => return Response::failure(&request.id, error),
     };
     let response = dispatch(state, request);
-    if response.ok {
+    if response.is_ok() {
         files.remove(&session_id);
     }
     response
-}
-
-fn request_headers(request: &Request) -> Result<Vec<(String, String)>, String> {
-    let Some(value) = request.params.get("headers") else {
-        return Ok(Vec::new());
-    };
-    let Some(object) = value.as_object() else {
-        return Err("'headers' must be an object".into());
-    };
-    if object.len() > 16 {
-        return Err("at most 16 media headers are allowed".into());
-    }
-    object
-        .iter()
-        .map(|(name, value)| {
-            let value = value
-                .as_str()
-                .ok_or_else(|| format!("header '{name}' must be a string"))?;
-            Ok((name.clone(), value.to_owned()))
-        })
-        .collect()
 }
 
 fn control_session(
@@ -477,7 +668,7 @@ fn control_session(
         Ok(value) => value.to_owned(),
         Err(error) => return Response::failure(&request.id, error),
     };
-    let action = match request.param_string("action") {
+    let control = match request.session_control() {
         Ok(value) => value,
         Err(error) => return Response::failure(&request.id, error),
     };
@@ -491,15 +682,18 @@ fn control_session(
             "receiver is not connected",
         );
     };
-    let result = fcast_client::upstream::UpstreamContext::control(
-        device,
-        action,
-        request.params.get("positionMs").and_then(Value::as_f64),
-        request.params.get("level").and_then(Value::as_f64),
-        request.params.get("speed").and_then(Value::as_f64),
-    );
+    let (action, position, level, speed) = match control {
+        SessionControl::Play => ("play", None, None, None),
+        SessionControl::Resume => ("resume", None, None, None),
+        SessionControl::Pause => ("pause", None, None, None),
+        SessionControl::Stop => ("stop", None, None, None),
+        SessionControl::Seek(value) => ("seek", Some(value), None, None),
+        SessionControl::Volume(value) => ("volume", None, Some(value), None),
+        SessionControl::Speed(value) => ("speed", None, None, Some(value)),
+    };
+    let result = UpstreamContext::control(device, action, position, level, speed);
     if let Err(error) = result {
-        return failure(&request.id, "fcast_control", error);
+        return failure(&request.id, "fcast_control", error.to_string());
     }
     dispatch(state, request)
 }
@@ -522,7 +716,10 @@ fn select_track(
         Err(error) => return Response::failure(&request.id, error),
     };
     let track_type = match request.param_string("trackType") {
-        Ok(value) => value,
+        Ok("video") => TrackType::Video,
+        Ok("audio") => TrackType::Audio,
+        Ok("text" | "subtitle") => TrackType::Text,
+        Ok(_) => return failure(&request.id, "invalid_params", "unsupported track type"),
         Err(error) => return Response::failure(&request.id, error),
     };
     let Some(session) = state.sessions.get(&session_id) else {
@@ -536,16 +733,19 @@ fn select_track(
         );
     };
     if let Err(error) = UpstreamContext::select_track(device, track_id, track_type) {
-        return failure(&request.id, "fcast_track", error);
+        return failure(&request.id, "fcast_track", error.to_string());
     }
     dispatch(state, request)
 }
 
 fn diagnostics_snapshot(state: &BridgeState, request: &Request) -> Response {
-    let snapshot = fcast_diagnostics::DiagnosticSnapshot::new(
-        state.uptime_ms(),
-        state.receivers.len(),
-        state.sessions.len(),
+    let snapshot = state.warnings().fold(
+        fcast_diagnostics::DiagnosticSnapshot::new(
+            state.uptime_ms(),
+            state.receivers.len(),
+            state.sessions.len(),
+        ),
+        |snapshot, warning| snapshot.warning(warning),
     );
     match serde_json::to_value(snapshot) {
         Ok(value) => Response::success(&request.id, value),
@@ -608,7 +808,7 @@ fn mirror_negotiate(
                 }),
             ));
             if let Err(error) = UpstreamContext::start_mirroring(device, signaller.clone()) {
-                return failure(&request.id, "mirror_negotiation_failed", error);
+                return failure(&request.id, "mirror_negotiation_failed", error.to_string());
             }
             mirrors.insert(session_id.clone(), signaller);
             Response::success(
@@ -629,7 +829,7 @@ fn mirror_negotiate(
                 Err(error) => return Response::failure(&request.id, error),
             };
             if let Err(error) = signaller.submit_offer(sdp) {
-                return failure(&request.id, "mirror_negotiation_failed", error);
+                return failure(&request.id, "mirror_negotiation_failed", error.to_string());
             }
             Response::success(
                 &request.id,
@@ -713,29 +913,130 @@ fn trust_store_path() -> io::Result<PathBuf> {
         })
 }
 
-fn now_unix() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+fn now_unix() -> Result<u64, std::time::SystemTimeError> {
+    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
 fn failure(id: &str, code: impl Into<String>, message: impl Into<String>) -> Response {
-    Response {
-        v: fcast_bridge::PROTOCOL_VERSION,
-        id: id.into(),
-        ok: false,
-        result: None,
-        error: Some(ResponseError {
+    Response::failure_with(
+        id,
+        ResponseError {
             code: code.into(),
             message: message.into(),
             recoverable: false,
             suggested_next_mode: None,
             details: None,
-        }),
-    }
+        },
+    )
 }
 
 fn malformed_request_response(error: ProtocolError) -> Response {
     failure("invalid-request", "invalid_request", error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fcast_receiver_trust::fingerprint_spki;
+
+    fn request(method: &str, params: serde_json::Value) -> Request {
+        Request {
+            v: fcast_bridge::PROTOCOL_VERSION,
+            id: "test".into(),
+            method: method.into(),
+            params: params.as_object().unwrap().clone(),
+        }
+    }
+
+    fn state_with_receiver() -> (BridgeState, String) {
+        let fingerprint = fingerprint_spki(b"receiver-key").to_string();
+        let mut state = BridgeState::new();
+        state.receivers.insert(
+            "receiver-1".into(),
+            ReceiverSummary {
+                id: "receiver-1".into(),
+                name: "Receiver".into(),
+                host: "192.0.2.1".into(),
+                port: 46899,
+                fingerprint: Some(fingerprint.clone()),
+                connection_state: ConnectionState::Discovered,
+                trusted: true,
+                ttl_seconds: Some(60),
+            },
+        );
+        (state, fingerprint)
+    }
+
+    #[test]
+    fn trust_rejects_a_fingerprint_that_was_not_discovered() {
+        let (mut state, _) = state_with_receiver();
+        state.receivers.get_mut("receiver-1").unwrap().trusted = false;
+        let other = fingerprint_spki(b"attacker-key");
+        let response = trust_receiver(
+            &mut state,
+            &mut TrustStore::in_memory(),
+            &request(
+                "receiver.trust",
+                serde_json::json!({
+                    "receiverId": "receiver-1",
+                    "fingerprint": other.as_str(),
+                }),
+            ),
+        );
+        assert_eq!(response.error().unwrap().code, "fingerprint_mismatch");
+        assert!(!state.receivers["receiver-1"].trusted);
+    }
+
+    #[test]
+    fn credential_lease_is_https_origin_bound_and_single_use() {
+        let (state, fingerprint) = state_with_receiver();
+        let mut leases = CredentialLeases::default();
+        let response = create_credential_lease(
+            &state,
+            &mut leases,
+            &request(
+                "credentialLease.create",
+                serde_json::json!({
+                    "receiverId": "receiver-1",
+                    "url": "https://media.example/master.m3u8",
+                    "headers": {"Authorization": "Bearer secret"},
+                }),
+            ),
+        );
+        let lease_id = response
+            .result()
+            .and_then(|value| value.get("credentialLeaseId"))
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_owned();
+        assert!(
+            leases
+                .claim(
+                    &lease_id,
+                    "receiver-1",
+                    Some(&fingerprint),
+                    &Url::parse("https://other.example/video").unwrap(),
+                )
+                .is_err()
+        );
+        let headers = leases
+            .claim(
+                &lease_id,
+                "receiver-1",
+                Some(&fingerprint),
+                &Url::parse("https://media.example/video").unwrap(),
+            )
+            .unwrap();
+        assert_eq!(headers[0].0, "Authorization");
+        assert!(
+            leases
+                .claim(
+                    &lease_id,
+                    "receiver-1",
+                    Some(&fingerprint),
+                    &Url::parse("https://media.example/video").unwrap(),
+                )
+                .is_err()
+        );
+    }
 }
