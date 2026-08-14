@@ -8,11 +8,14 @@ The project has two strict halves:
    FCompanion lease helpers, and bounded media helpers.
 
 The native-messaging channel carries JSON control envelopes only. Media bytes
-are either sent directly by the receiver from a public media URL or exposed to
-the pinned FCast SDK through its FCompanion provider using an ephemeral local
-file lease. The standalone loopback HTTP server in `crates/fcompanion` is a
-bounded fixture for range/expiry tests, not a general-purpose proxy. A request
-follows this order:
+are either fetched directly by the trusted receiver from a public media URL or
+exposed to the pinned FCast SDK through its FCompanion provider using an
+ephemeral local file lease. The standalone loopback HTTP server in
+`crates/fcompanion` is a bounded fixture for range/expiry tests, not a
+general-purpose proxy. Public HLS and DASH URLs use direct receiver fetching:
+the pinned SDK only supports static FCompanion files and cannot register the
+dynamic resource graph required by adaptive manifests. A request follows this
+order:
 
 `user action → detector → bridge → trust gate → direct FCast → FCompanion → element capture → tab mirroring`
 

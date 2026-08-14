@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuWS7blOrIAqAIcOyZIRlTh7QM4MCpWXjSUr/54YDb2fMqbm2TAxTELKt0IUK9rroWZzOQcx30wqVrE+Usb6Fa00A+XIkXPxTzJd7Kct0t0L2zp9Ee+hlGNIJlS2wqbb+v1YZmjqQNDsBkSWX+moiO1/c88sMmLNH2MDNDkC0Sol2y3T1If7bIED/DHH7siwCTIUFjmqK8C//UG5WCBOyTGwAdp45p0L2Rwyc1ulAhOx/MDXNfuPHAp7oes3oQTb1TUZxHfvJX90dkGZihmM9XVEhVSlY9Tr1MwoK32/bXeLTnthfNLirKNjbk13Sa0KIVr2Tt4Www/2XLZMXQfFDPQIDAQAB",
   "description": "Send explicitly selected web media to a trusted local FCast receiver.",
-  "permissions": ["activeTab", "scripting", "nativeMessaging", "storage"],
+  "permissions": ["activeTab", "scripting", "nativeMessaging", "storage", "webRequest", "cookies"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "action": { "default_title": "Send to FCast", "default_popup": "popup.html" },
   "background": { "service_worker": "dist/background.js", "type": "module" },
   "options_page": "settings.html"

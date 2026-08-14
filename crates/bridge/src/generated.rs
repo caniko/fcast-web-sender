@@ -17,5 +17,7 @@ pub const GENERATED_BRIDGE_METHODS: &[&str] = &[
     "session.close",
     "companion.register",
     "companion.unregister",
+    "credentialLease.create",
+    "credentialLease.revoke",
     "mirror.negotiate",
 ];

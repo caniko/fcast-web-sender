@@ -4,7 +4,7 @@ import { initialState, reduce } from "./state.ts";
 
 const candidate = candidateFromProbe({ id: "video-1", mediaKind: "video", sourceUrl: "https://media.example/video.m3u8", playing: true, visibleArea: 100 });
 const path = chooseDeliveryPath(candidate, { direct: true, fcompanion: true, elementCapture: true, tabMirroring: true });
-if (path !== "fcompanion") throw new Error(`unexpected fallback path: ${path}`);
+if (path !== "direct") throw new Error(`unexpected delivery path: ${path}`);
 
 const state = reduce(initialState, {
   type: "receiver/select",

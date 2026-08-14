@@ -1,26 +1,52 @@
-import { bridgeCall, connectNativeEvents, currentState, ingestCandidates, injectDetector, invalidateDetector, subscribeBridgeEvents } from "./browser.js";
+import { bridgeCall, clearObservedCredentials, connectNativeEvents, currentState, getObservedAuthorization, ingestCandidates, injectDetector, invalidateDetector, observeAuthorization, removeCandidatesForTab, subscribeBridgeEvents } from "./browser.js";
 import { firefoxMirrorAdapter } from "./capture.js";
 import { createMirrorPeer } from "./mirroring.js";
 
 declare const browser: {
   runtime: {
     onStartup: { addListener(listener: () => void): void };
-    onMessage: { addListener(listener: (message: unknown) => void): void };
+    onMessage: { addListener(listener: (message: unknown, sender: { tab?: { id?: number } }, sendResponse: (response?: unknown) => void) => void): void };
   };
-  tabs: { onUpdated: { addListener(listener: (tabId: number, changeInfo: { status?: string }) => void): void } };
+  tabs: {
+    query(queryInfo: { active: boolean; lastFocusedWindow: boolean }): Promise<Array<{ id?: number }>>;
+    onActivated: { addListener(listener: (activeInfo: { tabId: number }) => void): void };
+    onUpdated: { addListener(listener: (tabId: number, changeInfo: { status?: string }) => void): void };
+  };
+  webRequest: {
+    onBeforeSendHeaders: { addListener(listener: (details: { tabId: number; url: string; requestHeaders?: Array<{ name: string; value?: string }> }) => void, filter: { urls: string[]; types: string[] }, extraInfoSpec: string[]): void };
+  };
   browserAction: { onClicked: { addListener(listener: (tab: { id?: number }) => void): void } };
 };
+let activeTabId: number | undefined;
+void browser.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => { activeTabId = tab?.id; });
+browser.tabs.onActivated.addListener(({ tabId }) => { activeTabId = tabId; });
+browser.webRequest.onBeforeSendHeaders.addListener((details) => {
+  if (details.tabId !== activeTabId) return;
+  const authorization = details.requestHeaders?.find(({ name }) => name.toLowerCase() === "authorization")?.value;
+  if (authorization) observeAuthorization(details.tabId, details.url, authorization);
+}, { urls: ["http://*/*", "https://*/*"], types: ["media", "xmlhttprequest"] }, ["requestHeaders"]);
 browser.runtime.onStartup.addListener(() => {
   connectNativeEvents();
   void bridgeCall("discovery.start", {});
 });
-browser.runtime.onMessage.addListener((message) => {
+browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (typeof message !== "object" || message === null) return;
+  const credentialRequest = message as { source?: unknown; type?: unknown; tabId?: unknown; origin?: unknown };
+  if (!sender.tab && credentialRequest.source === "fcast-web-sender" && credentialRequest.type === "credential-authorization" && typeof credentialRequest.tabId === "number" && typeof credentialRequest.origin === "string") {
+    sendResponse(getObservedAuthorization(credentialRequest.tabId, credentialRequest.origin));
+    return;
+  }
   const candidates = (message as { candidates?: unknown }).candidates;
-  if ((message as { source?: unknown }).source === "fcast-web-sender" && Array.isArray(candidates)) ingestCandidates(candidates);
+  if ((message as { source?: unknown }).source === "fcast-web-sender" && sender.tab?.id !== undefined && Array.isArray(candidates)) {
+    ingestCandidates(candidates, sender.tab.id);
+  }
 });
 browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.status === "loading") invalidateDetector(tabId);
+  if (changeInfo.status === "loading") {
+    invalidateDetector(tabId);
+    clearObservedCredentials(tabId);
+    removeCandidatesForTab(tabId);
+  }
 });
 let activeMirror: ReturnType<typeof createMirrorPeer> | undefined;
 let removeMirrorEvents: (() => void) | undefined;

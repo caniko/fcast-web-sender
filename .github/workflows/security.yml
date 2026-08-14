@@ -1,0 +1,31 @@
+name: Security
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["**"]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    env:
+      NIX_CONFIG: "experimental-features = nix-command flakes"
+      CARGO_HOME: "/tmp/.cargo"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
+
+      - name: Dependency policy
+        run: nix develop -c cargo deny check advisories bans licenses sources
+
+      - name: RustSec audit
+        run: nix develop -c cargo audit

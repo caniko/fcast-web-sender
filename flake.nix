@@ -10,7 +10,7 @@
   };
 
   inputs = {
-    rs-harbor.url = "github:caniko/rs-harbor/0b5c6f3651f2d07f71c40f7880fa89d53420c2e0";
+    rs-harbor.url = "github:caniko/rs-harbor/c26b735eede8078f795651c4a9cbf0be8733b221";
     nixpkgs.follows = "rs-harbor/nixpkgs";
     rust-overlay.follows = "rs-harbor/rust-overlay";
     crane.follows = "rs-harbor/crane";
@@ -50,6 +50,7 @@
       # build independent of canix's private sccache transport.
       toolchain = rs-harbor.lib.mkToolchain {
         inherit pkgs;
+        toolchainProfile = "nightly";
         cache.enable = false;
       };
       inherit (toolchain) craneLib;

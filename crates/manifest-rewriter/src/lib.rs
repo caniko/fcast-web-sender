@@ -8,15 +8,22 @@ use thiserror::Error;
 use url::Url;
 
 #[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RewriteError {
     #[error("manifest contains encrypted HLS media")]
     EncryptedHls,
     #[error("manifest contains DASH content protection")]
     ContentProtection,
-    #[error("manifest URL is not an HTTP(S) URL: {0}")]
-    InvalidUrl(String),
+    #[error("manifest URL is not an HTTP(S) URL: {value}")]
+    InvalidUrl {
+        value: String,
+        #[source]
+        source: Option<url::ParseError>,
+    },
     #[error("manifest has an unterminated attribute")]
     UnterminatedAttribute,
+    #[error("manifest has an unterminated BaseURL element")]
+    UnterminatedBaseUrl,
 }
 
 pub fn rewrite_hls<F>(
@@ -69,17 +76,17 @@ where
         while let Some(open_offset) = output[cursor..].find(&open) {
             let start = cursor + open_offset + open.len();
             let Some(close_offset) = output[start..].find(&close) else {
-                break;
+                return Err(RewriteError::UnterminatedBaseUrl);
             };
             let end = start + close_offset;
-            let value = output[start..end].trim();
-            if !value.is_empty() {
-                let url = resolve_media_url(source, value)?;
+            let contents = &output[start..end];
+            let value_start = start + contents.len() - contents.trim_start().len();
+            let value_end = start + contents.trim_end().len();
+            if value_start < value_end {
+                let url = resolve_media_url(source, &output[value_start..value_end])?;
                 let replacement = rewrite_url(&url);
-                let leading = output[start..end].len() - value.len();
-                let prefix = output[start..start + leading].to_owned();
-                output.replace_range(start..end, &format!("{prefix}{replacement}"));
-                cursor = start + leading + replacement.len() + close.len();
+                output.replace_range(value_start..value_end, &replacement);
+                cursor = value_start + replacement.len();
             } else {
                 cursor = end + close.len();
             }
@@ -158,9 +165,15 @@ where
 fn resolve_media_url(source: &Url, value: &str) -> Result<Url, RewriteError> {
     let url = source
         .join(value.trim())
-        .map_err(|_| RewriteError::InvalidUrl(value.to_owned()))?;
+        .map_err(|source| RewriteError::InvalidUrl {
+            value: value.to_owned(),
+            source: Some(source),
+        })?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        return Err(RewriteError::InvalidUrl(value.to_owned()));
+        return Err(RewriteError::InvalidUrl {
+            value: value.to_owned(),
+            source: None,
+        });
     }
     Ok(url)
 }
@@ -209,5 +222,36 @@ mod tests {
         .unwrap();
         assert!(output.contains("resource/video"));
         assert!(output.contains("resource/chunk-$Number$.m4s"));
+    }
+
+    #[test]
+    fn dash_preserves_unicode_and_trailing_whitespace_around_base_url() {
+        let source = Url::parse("https://media.example/manifest.mpd").unwrap();
+        let output = rewrite_dash("<BaseURL>\u{2003}video/ \t</BaseURL>", &source, mapper).unwrap();
+        assert_eq!(
+            output,
+            "<BaseURL>\u{2003}http://127.0.0.1:4000/resource/video \t</BaseURL>"
+        );
+    }
+
+    #[test]
+    fn dash_rejects_unterminated_base_url() {
+        let source = Url::parse("https://media.example/manifest.mpd").unwrap();
+        assert_eq!(
+            rewrite_dash("<BaseURL>video/", &source, mapper),
+            Err(RewriteError::UnterminatedBaseUrl)
+        );
+    }
+
+    #[test]
+    fn invalid_url_preserves_parse_source() {
+        let source = Url::parse("https://media.example/manifest.mpd").unwrap();
+        assert!(matches!(
+            resolve_media_url(&source, "http://["),
+            Err(RewriteError::InvalidUrl {
+                source: Some(_),
+                ..
+            })
+        ));
     }
 }

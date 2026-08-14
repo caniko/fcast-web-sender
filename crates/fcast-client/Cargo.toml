@@ -11,16 +11,18 @@ repository.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-base64.workspace = true
+base64 = { workspace = true, optional = true }
 fcast-sender-sdk = { git = "https://gitlab.futo.org/videostreaming/fcast.git", rev = "91f0261ec98217ee76beb76d773e3d06041023eb", default-features = false, features = [
   "fcast",
   "discovery",
 ], optional = true }
 serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 url.workspace = true
 
 [features]
-default = ["upstream"]
-upstream = ["dep:fcast-sender-sdk"]
+default = []
+upstream = ["dep:base64", "dep:fcast-sender-sdk"]
+
+[dev-dependencies]
+serde_json.workspace = true

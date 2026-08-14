@@ -2,7 +2,7 @@
 
 <!-- simit:badges:start -->
 
-[![CI](https://img.shields.io/badge/CI-managed-2088ff)](.github/workflows/ci.yaml) [![Nix](https://img.shields.io/badge/Nix-managed-5277c3)](flake.nix) [![crates.io](https://img.shields.io/badge/crates.io-ready-f46623)](https://crates.io/crates/fcast-bridge) [![artifacts](https://img.shields.io/badge/artifacts-configured-2ea44f)](.github/workflows/release.yml)
+[![CI](https://img.shields.io/badge/CI-managed+extra-2088ff)](.github/workflows/ci.yaml) [![Nix](https://img.shields.io/badge/Nix-managed-5277c3)](flake.nix) [![crates.io](https://img.shields.io/badge/crates.io-ready-f46623)](https://crates.io/crates/fcast-bridge) [![artifacts](https://img.shields.io/badge/artifacts-configured-2ea44f)](.github/workflows/release.yml)
 
 <!-- simit:badges:end -->
 
@@ -38,7 +38,10 @@ checked-in TypeScript and Rust representations used by the bridge packages.
 - A receiver must be explicitly trusted by its SPKI fingerprint before a
   session can connect.
 - Native-messaging frames have a bounded size and carry control messages only.
-- Media URLs are validated for scheme, credentials, redirects, and private
-  address targets before the companion fetches a manifest.
+- Companion-fetched media is validated for scheme, credentials, redirects,
+  DNS rebinding, and private address targets. Direct media fetching remains a
+  responsibility of the explicitly trusted receiver.
+- Cookie and Authorization forwarding requires an explicit, short-lived lease
+  bound to one trusted receiver and HTTPS origin.
 - DRM, encrypted media keys, and circumvention are intentionally unsupported.
 - Discovery and media control are local; there is no cloud relay.

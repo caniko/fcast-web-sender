@@ -21,7 +21,7 @@
   cargo-clippy = {
     enable = true;
     name = "cargo clippy";
-    entry = "cargo clippy --all-targets --all-features -- --deny warnings";
+    entry = "cargo clippy --workspace --all-targets --all-features -- --deny warnings";
     extraPackages = pkgs.lib.optional (rustToolchain != null) rustToolchain;
     pass_filenames = false;
   };

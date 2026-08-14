@@ -21,6 +21,7 @@ pub const MDNS_MULTICAST_V6: SocketAddr = SocketAddr::new(
 );
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum DiscoveryError {
     #[error("mDNS packet ended at byte {0}")]
     Truncated(usize),
@@ -28,6 +29,12 @@ pub enum DiscoveryError {
     InvalidName,
     #[error("mDNS packet contains an invalid record")]
     InvalidRecord,
+    #[error("mDNS service names must contain only nonempty labels of at most 63 bytes")]
+    InvalidServiceLabel,
+    #[error("mDNS service name exceeds 255 bytes")]
+    ServiceNameTooLong,
+    #[error("mDNS discovery timeout is too large")]
+    TimeoutTooLarge,
     #[error("mDNS socket error: {0}")]
     Io(#[from] io::Error),
 }
@@ -88,16 +95,25 @@ struct RawRecord {
     ttl_seconds: u32,
 }
 
-pub fn build_query(service: &str) -> Vec<u8> {
+pub fn build_query(service: &str) -> Result<Vec<u8>, DiscoveryError> {
     let mut packet = Vec::with_capacity(64);
     packet.extend_from_slice(&[0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
-    for label in service.trim_end_matches('.').split('.') {
+    let service = service.strip_suffix('.').unwrap_or(service);
+    let mut name_length = 1;
+    for label in service.split('.') {
+        if label.is_empty() || label.len() > 63 {
+            return Err(DiscoveryError::InvalidServiceLabel);
+        }
+        name_length += label.len() + 1;
+        if name_length > 255 {
+            return Err(DiscoveryError::ServiceNameTooLong);
+        }
         packet.push(label.len() as u8);
         packet.extend_from_slice(label.as_bytes());
     }
     packet.push(0);
     packet.extend_from_slice(&[0, 12, 0, 1]);
-    packet
+    Ok(packet)
 }
 
 pub fn parse_response(packet: &[u8], service: &str) -> Result<Vec<ServiceRecord>, DiscoveryError> {
@@ -327,16 +343,28 @@ impl MdnsBrowser {
     }
 
     pub fn discover(&self, service: &str) -> Result<Vec<ServiceRecord>, DiscoveryError> {
-        let query = build_query(service);
+        let query = build_query(service)?;
+        let deadline = Instant::now()
+            .checked_add(self.timeout)
+            .ok_or(DiscoveryError::TimeoutTooLarge)?;
+        let mut sent = false;
+        let mut last_send_error = None;
         for (index, socket) in self.sockets.iter().enumerate() {
             let destination = if index == 0 {
                 MDNS_MULTICAST
             } else {
                 MDNS_MULTICAST_V6
             };
-            let _ = socket.send_to(&query, destination);
+            match socket.send_to(&query, destination) {
+                Ok(_) => sent = true,
+                Err(error) => last_send_error = Some(error),
+            }
         }
-        let deadline = Instant::now() + self.timeout;
+        if !sent {
+            return Err(last_send_error
+                .unwrap_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "no mDNS sockets"))
+                .into());
+        }
         let mut buffer = [0_u8; 16 * 1024];
         let mut found = BTreeMap::new();
         for socket in &self.sockets {
@@ -366,46 +394,13 @@ impl MdnsBrowser {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct DiscoveryCache {
-    entries: BTreeMap<String, (ServiceRecord, Instant)>,
-}
-
-impl DiscoveryCache {
-    pub fn upsert_at(&mut self, record: ServiceRecord, now: Instant) {
-        let expiry = now + Duration::from_secs(record.ttl_seconds as u64);
-        self.entries.insert(record.id.clone(), (record, expiry));
-    }
-
-    pub fn expire_at(&mut self, now: Instant) -> Vec<String> {
-        let expired = self
-            .entries
-            .iter()
-            .filter(|(_, (_, expiry))| *expiry <= now)
-            .map(|(id, _)| id.clone())
-            .collect::<Vec<_>>();
-        for id in &expired {
-            self.entries.remove(id);
-        }
-        expired
-    }
-
-    pub fn values_at(&mut self, now: Instant) -> Vec<ServiceRecord> {
-        self.expire_at(now);
-        self.entries
-            .values()
-            .map(|(record, _)| record.clone())
-            .collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn query_has_the_expected_service_question() {
-        let packet = build_query(SERVICE_NAME);
+        let packet = build_query(SERVICE_NAME).unwrap();
         assert_eq!(&packet[..6], &[0, 0, 0, 0, 0, 1]);
         assert_eq!(
             &packet[12..],
@@ -414,6 +409,34 @@ mod tests {
                 b'c', b'a', b'l', 0, 0, 12, 0, 1,
             ]
         );
+    }
+
+    #[test]
+    fn query_rejects_invalid_dns_names() {
+        assert!(matches!(
+            build_query("_fcast..local"),
+            Err(DiscoveryError::InvalidServiceLabel)
+        ));
+        assert!(matches!(
+            build_query(&format!("{}.local", "x".repeat(64))),
+            Err(DiscoveryError::InvalidServiceLabel)
+        ));
+        assert!(matches!(
+            build_query(&vec!["a".repeat(63); 4].join(".")),
+            Err(DiscoveryError::ServiceNameTooLong)
+        ));
+    }
+
+    #[test]
+    fn discovery_errors_when_no_socket_sends() {
+        let browser = MdnsBrowser {
+            sockets: Vec::new(),
+            timeout: Duration::ZERO,
+        };
+        assert!(matches!(
+            browser.discover(SERVICE_NAME),
+            Err(DiscoveryError::Io(error)) if error.kind() == io::ErrorKind::NotConnected
+        ));
     }
 
     #[test]
@@ -439,24 +462,5 @@ mod tests {
         ];
         let records = parse_response(&packet, SERVICE_NAME).unwrap();
         assert!(records.is_empty());
-    }
-
-    #[test]
-    fn discovery_cache_expires_records_using_advertised_ttl() {
-        let record = ServiceRecord {
-            id: "receiver._fcast._tcp.local.:1234".into(),
-            instance: "receiver".into(),
-            host: "receiver.local".into(),
-            port: 1234,
-            addresses: vec![IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10))],
-            txt: BTreeMap::new(),
-            ttl_seconds: 1,
-        };
-        let now = Instant::now();
-        let mut cache = DiscoveryCache::default();
-        cache.upsert_at(record, now);
-        assert_eq!(cache.values_at(now).len(), 1);
-        assert_eq!(cache.expire_at(now + Duration::from_secs(2)).len(), 1);
-        assert!(cache.values_at(now + Duration::from_secs(2)).is_empty());
     }
 }
