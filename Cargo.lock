@@ -265,7 +265,7 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fcast-bridge"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "fcast-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64",
  "fcast-sender-sdk",
@@ -286,7 +286,7 @@ dependencies = [
 
 [[package]]
 name = "fcast-companion"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fcast-bridge",
  "fcast-client",
@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "fcast-diagnostics"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -311,7 +311,7 @@ dependencies = [
 
 [[package]]
 name = "fcast-discovery"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "thiserror",
@@ -319,7 +319,7 @@ dependencies = [
 
 [[package]]
 name = "fcast-fcompanion"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hex",
  "rand 0.9.5",
@@ -330,7 +330,7 @@ dependencies = [
 
 [[package]]
 name = "fcast-manifest-rewriter"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror",
  "url",
@@ -338,7 +338,7 @@ dependencies = [
 
 [[package]]
 name = "fcast-media-fetcher"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fcast-manifest-rewriter",
  "reqwest",
@@ -349,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "fcast-mock-receiver"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fcast-client",
  "serde_json",
@@ -379,7 +379,7 @@ dependencies = [
 
 [[package]]
 name = "fcast-receiver-trust"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64",
  "hex",
@@ -411,7 +411,7 @@ dependencies = [
 
 [[package]]
 name = "fcast-web-sender"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fcast-bridge",
  "serde_json",

@@ -1,7 +1,7 @@
 {
   "name": "fcast-web-sender",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A privacy-preserving browser sender for FCast receivers.",
   "license": "MIT",
   "packageManager": "pnpm@11.11.0",

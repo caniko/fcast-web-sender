@@ -11,6 +11,11 @@ explicitly selected web media to FCast receivers. It keeps discovery,
 receiver trust, and protocol transport local to the device. The browser
 extension never sends media bytes through the native-messaging channel.
 
+Install the extension, then install the Linux or Windows companion from
+[GitHub Releases](https://github.com/caniko/fcast-web-sender/releases) with
+`install.sh` or `install.ps1`. macOS is not included in 0.2.0. Privacy:
+[docs/privacy.md](docs/privacy.md).
+
 The workspace is deliberately split between browser-independent TypeScript
 packages and Rust companion crates. Chromium and Firefox adapters are thin
 surfaces over the same extension core.

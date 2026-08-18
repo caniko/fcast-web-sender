@@ -1,4 +1,4 @@
-import { permissionExplanation, type DeliveryPath, type MediaCandidate, type Receiver, type Session } from "@fcast/extension-core";
+import { permissionExplanation, type CompanionStatus, type DeliveryPath, type MediaCandidate, type Receiver, type Session } from "@fcast/extension-core";
 
 export interface PopupActions {
   trustReceiver?: (receiver: Receiver, fingerprint: string) => void;
@@ -6,12 +6,15 @@ export interface PopupActions {
   controlSession?: (session: Session, action: string, value?: number) => void;
 }
 
+const COMPANION_RELEASES = "https://github.com/caniko/fcast-web-sender/releases";
+
 export function renderPopup(
   root: HTMLElement,
   receivers: readonly Receiver[],
   candidates: readonly MediaCandidate[] = [],
   sessions: readonly Session[] = [],
   actions: PopupActions = {},
+  companion: CompanionStatus = { state: "ready" },
 ): void {
   root.replaceChildren();
   const heading = document.createElement("h1");
@@ -23,6 +26,16 @@ export function renderPopup(
 
   const status = document.createElement("p");
   status.setAttribute("role", "status");
+  if (companion.state === "missing" || companion.state === "disconnected" || companion.state === "incompatible") {
+    status.textContent = "Companion not found. Install the Linux or Windows companion from GitHub Releases, then reopen this popup.";
+    const link = document.createElement("a");
+    link.href = COMPANION_RELEASES;
+    link.textContent = COMPANION_RELEASES;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    root.append(status, link);
+    return;
+  }
   status.textContent = receivers.length === 0 ? "Searching for receivers…" : `${receivers.length} receiver(s) available`;
   root.append(status);
 

@@ -1,8 +1,8 @@
 {
   "name": "@fcast/extension-firefox",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "dependencies": { "@fcast/bridge-types": "workspace:*", "@fcast/extension-core": "workspace:*", "@fcast/extension-ui": "workspace:*" },
-  "scripts": { "build": "tsc -p tsconfig.json && esbuild src/background.ts --bundle --format=esm --outfile=dist/background.js && esbuild src/popup.ts --bundle --format=esm --outfile=dist/popup.js && esbuild src/settings.ts --bundle --format=esm --outfile=dist/settings.js", "check": "tsc -p tsconfig.json --noEmit", "test": "node -e \"process.stdout.write('firefox package ok\\n')\"" }
+  "scripts": { "build": "tsc -p tsconfig.json && esbuild src/background.ts --bundle --format=iife --outfile=dist/background.js && esbuild src/popup.ts --bundle --format=esm --outfile=dist/popup.js && esbuild src/settings.ts --bundle --format=esm --outfile=dist/settings.js", "check": "tsc -p tsconfig.json --noEmit", "test": "node -e \"process.stdout.write('firefox package ok\\n')\"" }
 }

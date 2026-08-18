@@ -24,9 +24,8 @@ function pathAllowed(path: DeliveryPath, input: ResolverInput): boolean {
     case "fcompanion":
       return capabilities.fcompanion && Boolean(media.url) && media.requiresCredentials;
     case "element-capture":
-      return capabilities.elementCapture && input.captureAuthorized !== false;
     case "tab-mirroring":
-      return capabilities.tabMirroring && input.captureAuthorized === true;
+      return false;
   }
 }
 

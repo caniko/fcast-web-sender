@@ -1,7 +1,7 @@
 {
   "name": "@fcast/extension-content",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "dependencies": { "@fcast/extension-core": "workspace:*" },
   "scripts": { "build": "tsc -p tsconfig.json && esbuild src/content.ts --bundle --format=iife --outfile=dist/content.js && esbuild src/main-world-probe.ts --bundle --format=iife --outfile=dist/main-world-probe.js", "check": "tsc -p tsconfig.json --noEmit", "test": "node -e \"process.stdout.write('content package ok\\n')\"" }

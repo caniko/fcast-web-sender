@@ -3,5 +3,6 @@
 /**/node_modules/
 /.direnv/
 /.simit/
+/result
 .pre-commit-config.yaml
 *.swp

@@ -113,19 +113,28 @@ function receiveNativeMessage(message: unknown): void {
   request.resolve(message as BridgeResponse);
 }
 
+function setCompanionState(next: ExtensionState["companion"]["state"]): void {
+  state.current = reduce(state.current, { type: "companion/status", status: { state: next } });
+}
+
 function getNativePort(): NativePort | undefined {
   if (nativePort) return nativePort;
   nativePort = chrome.runtime.connectNative?.(nativeHost);
-  if (!nativePort) return undefined;
+  if (!nativePort) {
+    setCompanionState("missing");
+    return undefined;
+  }
   nativePort.onMessage.addListener(receiveNativeMessage);
   nativePort.onDisconnect?.addListener(() => {
     nativePort = undefined;
+    setCompanionState("missing");
     for (const request of pending.values()) {
       globalThis.clearTimeout(request.timer);
       request.reject(new Error("native companion disconnected"));
     }
     pending.clear();
   });
+  setCompanionState("ready");
   return nativePort;
 }
 

@@ -43,7 +43,9 @@ if (root) {
         await bridgeCall("session.control", { sessionId: session.id, action, ...(value === undefined ? {} : { positionMs: value }) });
         await refresh();
       },
-    });
+    }, state.companion);
   };
-  void refresh();
+  void refresh().catch(() => {
+    renderPopup(root, [], [], [], {}, currentState().companion.state === "ready" ? { state: "missing" } : currentState().companion);
+  });
 }

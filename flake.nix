@@ -43,7 +43,7 @@
         overlays = [(import rust-overlay)];
       };
       lib = pkgs.lib;
-      version = "0.1.0";
+      version = "0.2.0";
       pname = "fcast-companion";
 
       # GitHub Actions is a public runner. Keep the hosted checks and release
@@ -137,6 +137,38 @@
         else null;
 
       binaryArchiveName = "${pname}-${version}-x86_64-linux-musl.tar.gz";
+      windowsZipName = "${pname}-${version}-windows-x86_64.zip";
+      linuxReleaseDir =
+        if binaryRelease == null
+        then null
+        else
+          pkgs.runCommand "fcast-linux-installer-archive" {
+            nativeBuildInputs = [pkgs.gnutar pkgs.gzip];
+          } ''
+            mkdir -p work
+            tar -xzf ${binaryRelease.archives.x86_64-linux-musl}/${binaryArchiveName} -C work
+            cp ${./installers/linux/install.sh} work/install.sh
+            cp ${./installers/linux/native-host.json.in} work/native-host.json.in
+            cp ${./installers/linux/native-host-firefox.json.in} work/native-host-firefox.json.in
+            chmod +x work/install.sh
+            mkdir -p "$out"
+            tar -czf "$out/${binaryArchiveName}" -C work .
+          '';
+      windowsReleaseDir = pkgs.runCommand "fcast-windows-installer-zip" {
+        nativeBuildInputs = [pkgs.zip];
+      } ''
+        mkdir -p pack
+        if [ -f ${crossPackages.fcast-companion-windows}/bin/fcast-companion.exe ]; then
+          cp ${crossPackages.fcast-companion-windows}/bin/fcast-companion.exe pack/
+        else
+          cp ${crossPackages.fcast-companion-windows}/bin/fcast-companion pack/fcast-companion.exe
+        fi
+        cp ${./installers/windows/install.ps1} pack/install.ps1
+        cp ${./installers/windows/native-host.json.in} pack/native-host.json.in
+        cp ${./installers/windows/native-host-firefox.json.in} pack/native-host-firefox.json.in
+        mkdir -p "$out"
+        (cd pack && zip -X -qr "$out/${windowsZipName}" .)
+      '';
       releaseArtifacts =
         if binaryRelease == null
         then {}
@@ -144,13 +176,24 @@
           binary = rs-harbor.lib.mkReleaseArtifact {
             inherit pkgs pname version;
             name = binaryArchiveName;
-            source = binaryRelease.archives.x86_64-linux-musl;
+            source = linuxReleaseDir;
             sourcePath = binaryArchiveName;
             kind = "binary-archive";
             format = "tar.gz";
             system = "x86_64-linux";
             rustTarget = "x86_64-unknown-linux-musl";
             validation = "static-archive";
+            consumable = true;
+          };
+          windows = rs-harbor.lib.mkReleaseArtifact {
+            inherit pkgs pname version;
+            name = windowsZipName;
+            source = windowsReleaseDir;
+            sourcePath = windowsZipName;
+            kind = "binary-archive";
+            format = "zip";
+            system = "x86_64-windows";
+            rustTarget = "x86_64-pc-windows-gnu";
             consumable = true;
           };
           chromium = rs-harbor.lib.mkReleaseArtifact {
@@ -199,6 +242,7 @@
           trap 'rm -rf "$stage"' EXIT
           tar -xzf "$archive" -C "$stage"
           test -x "$stage/bin/fcast-companion"
+          test -f "$stage/install.sh"
           "$stage/bin/fcast-companion" --version
         '';
       };

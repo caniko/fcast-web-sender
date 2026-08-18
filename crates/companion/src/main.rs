@@ -896,21 +896,28 @@ fn endpoint_for(
     })
 }
 
-fn trust_store_path() -> io::Result<PathBuf> {
-    if let Some(path) = std::env::var_os("FCAST_TRUST_STORE") {
-        return Ok(PathBuf::from(path));
+fn trust_store_from_env(get: impl Fn(&str) -> Option<PathBuf>) -> io::Result<PathBuf> {
+    if let Some(path) = get("FCAST_TRUST_STORE") {
+        return Ok(path);
     }
-    if let Some(config) = std::env::var_os("XDG_CONFIG_HOME") {
-        return Ok(PathBuf::from(config).join("fcast-web-sender/trust.json"));
+    if let Some(config) = get("XDG_CONFIG_HOME") {
+        return Ok(config.join("fcast-web-sender/trust.json"));
     }
-    std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join(".config/fcast-web-sender/trust.json"))
+    if let Some(appdata) = get("APPDATA") {
+        return Ok(appdata.join("fcast-web-sender/trust.json"));
+    }
+    get("HOME")
+        .map(|home| home.join(".config/fcast-web-sender/trust.json"))
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
-                "HOME is required for the trust store",
+                "HOME or APPDATA is required for the trust store",
             )
         })
+}
+
+fn trust_store_path() -> io::Result<PathBuf> {
+    trust_store_from_env(|key| std::env::var_os(key).map(PathBuf::from))
 }
 
 fn now_unix() -> Result<u64, std::time::SystemTimeError> {
@@ -1038,5 +1045,16 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+
+    #[test]
+    fn trust_store_uses_appdata_when_home_is_absent() {
+        let appdata = PathBuf::from("AppData/Roaming");
+        let path = trust_store_from_env(|key| match key {
+            "APPDATA" => Some(appdata.clone()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(path, appdata.join("fcast-web-sender/trust.json"));
     }
 }

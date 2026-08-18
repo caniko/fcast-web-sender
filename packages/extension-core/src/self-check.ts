@@ -1,10 +1,17 @@
 import { candidateFromProbe } from "./detector.ts";
-import { chooseDeliveryPath } from "./resolver.ts";
+import { chooseDeliveryPath, resolveDeliveryPath } from "./resolver.ts";
 import { initialState, reduce } from "./state.ts";
 
 const candidate = candidateFromProbe({ id: "video-1", mediaKind: "video", sourceUrl: "https://media.example/video.m3u8", playing: true, visibleArea: 100 });
 const path = chooseDeliveryPath(candidate, { direct: true, fcompanion: true, elementCapture: true, tabMirroring: true });
 if (path !== "direct") throw new Error(`unexpected delivery path: ${path}`);
+const mirrored = resolveDeliveryPath({
+  media: { ...candidate, kind: "capture-only" },
+  capabilities: { direct: true, fcompanion: true, elementCapture: true, tabMirroring: true },
+  captureAuthorized: true,
+  preferredPath: "tab-mirroring",
+});
+if (mirrored.path !== undefined) throw new Error(`capture paths must stay disabled: ${mirrored.path}`);
 
 const state = reduce(initialState, {
   type: "receiver/select",

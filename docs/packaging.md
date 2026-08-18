@@ -6,13 +6,10 @@
 `installers/` and are rendered with the companion's absolute path at install
 time; the repository never embeds a developer machine path.
 
-The flake also exposes rs-harbor cross outputs for
-`fcast-companion-aarch64-linux` and `fcast-companion-windows`. macOS outputs
-remain gated on a realized Apple SDK rather than silently producing an
-unusable artifact.
+`nix build .#release-bundle` publishes the Linux musl companion (with
+`install.sh`), a Windows zip (with `install.ps1`), and both unsigned extension
+zips. macOS outputs remain gated on a realized Apple SDK.
 
-Branch CI uploads build artifacts for review. A `v*` tag runs the Simit
-release-parity app, builds the companion through the pinned rs-harbor Nix
-derivation, packages both extensions, and publishes a GitHub release
-containing the Linux archive, checksums, and SBOMs. Release signing and
-browser-store submission remain explicit follow-up work.
+A `0.2.0` tag publishes those artifacts to GitHub Releases. Chrome Web Store
+and AMO submission is manual. Listing copy lives in `docs/store/listing.md`.
+The privacy policy is `docs/privacy.md`.

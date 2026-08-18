@@ -22,4 +22,13 @@ export function renderSettings(root: HTMLElement, continuousDetection = false, a
   label.prepend(checkbox);
   section.append(label);
   root.append(section);
+  const companion = document.createElement("p");
+  companion.textContent = "The extension needs the local companion on Linux or Windows: ";
+  const link = document.createElement("a");
+  link.href = "https://github.com/caniko/fcast-web-sender/releases";
+  link.textContent = "GitHub Releases";
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  companion.append(link);
+  root.append(companion);
 }

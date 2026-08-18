@@ -1,12 +1,28 @@
 {
   "manifest_version": 2,
   "name": "FCast Web Sender",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Send explicitly selected web media to a trusted local FCast receiver.",
+  "homepage_url": "https://github.com/caniko/fcast-web-sender",
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
   "permissions": ["activeTab", "nativeMessaging", "storage", "webRequest", "cookies"],
   "optional_permissions": ["http://*/*", "https://*/*"],
   "background": { "scripts": ["dist/background.js"], "persistent": false },
-  "browser_action": { "default_title": "Send to FCast", "default_popup": "popup.html" },
+  "browser_action": {
+    "default_title": "Send to FCast",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
   "options_ui": { "page": "settings.html", "open_in_tab": true },
-  "applications": { "gecko": { "id": "fcast-web-sender@caniko.com", "strict_min_version": "115.0" } }
+  "browser_specific_settings": {
+    "gecko": { "id": "fcast-web-sender@caniko.com", "strict_min_version": "115.0" }
+  }
 }
