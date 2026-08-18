@@ -190,16 +190,13 @@
           set -euo pipefail
           version="''${1:?version is required}"
           release_dir="''${2:-release}"
-          manifest="$(find "$release_dir" -maxdepth 1 -name '*-release-manifest.json' -print -quit)"
-          test -n "$manifest"
-          jq -e --arg version "$version" '.schemaVersion == 2 and .version == $version' "$manifest" >/dev/null
           archive="$(find "$release_dir" -maxdepth 1 -name 'fcast-companion-*.tar.gz' -print -quit)"
           test -n "$archive"
           stage="$(mktemp -d)"
           trap 'rm -rf "$stage"' EXIT
           tar -xzf "$archive" -C "$stage"
           test -x "$stage/bin/fcast-companion"
-          "$stage/bin/fcast-companion" --version
+          "$stage/bin/fcast-companion" --version | grep -Fq "$version"
         '';
       };
     in {

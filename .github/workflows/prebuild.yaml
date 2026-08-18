@@ -94,7 +94,7 @@ jobs:
           attic_config="$XDG_CONFIG_HOME/attic/config.toml"
           install -m 0600 /dev/null "$attic_config"
           {
-            printf '%s\n' 'default-server = canix"'
+            printf '%s\n' 'default-server = "canix"'
             printf '%s\n' '[servers.canix]'
             printf '%s\n' 'endpoint = "https://attic.candee.baby"'
             printf 'token = "%s"\n' "$ATTIC_TOKEN"
