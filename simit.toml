@@ -4,6 +4,8 @@ scope = "hooks-only"
 [prebuild]
 release_archives = true
 publish_attic = true
+attic_app = ".#push-flake-inputs"
+system_runners = { x86_64-linux = "ubuntu-24.04" }
 
 [ci]
 provider = "actions"
@@ -12,9 +14,7 @@ runtime = "nix"
 nix_builds = [".#fcast-companion-x86_64-linux-musl"]
 workspace = true
 workspace_strategy = "aggregate"
-
-[ci.nix_system_runners]
-"x86_64-linux" = "ubuntu-24.04"
+runner = "ubuntu-24.04"
 
 [release.github]
 repo = "caniko/fcast-web-sender"

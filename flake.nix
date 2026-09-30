@@ -215,6 +215,17 @@
           fcast-companion-x86_64-linux-musl = crossPackages.fcast-companion-x86_64-linux-musl;
         };
 
+      apps.push-flake-inputs = rs-harbor.lib.mkAtticPush {
+        inherit pkgs;
+        flake = ".";
+        adapter = rs-harbor.lib.mkAdapter {
+          attic = {
+            endpoint = "https://attic.candee.baby";
+            cache = "canix";
+            tokenEnvVar = "ATTIC_TOKEN";
+          };
+        };
+      };
       apps.release-smoke = {
         type = "app";
         program = "${releaseSmoke}/bin/fcast-release-smoke";
