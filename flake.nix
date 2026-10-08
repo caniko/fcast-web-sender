@@ -247,46 +247,47 @@
 
       checks = {
         default = crossPackages.${pname};
-        attic-publication-contract = pkgs.runCommand "fcast-attic-publication-contract" {
-          nativeBuildInputs = [pkgs.coreutils];
-        } ''
-          # Exercise the real publishers without credentials or network access.
-          nix() {
-            if [ "$1 $2" = 'flake archive' ]; then
-              printf '{"path":"/nix/store/fixture-source"}\n'
-            elif [ "$1 $2" = 'path-info -r' ]; then
-              shift 2
-              printf '/nix/store/fixture-runtime\n'
-              for link in "$@"; do readlink -e "$link"; done
-            else
-              return 1
-            fi
-          }
-          attic() {
-            test "$1" = push
-            test "$(stat -c '%a' "$XDG_CONFIG_HOME/attic/config.toml")" = 600
-            cat > uploaded-paths
-          }
-          export -f nix attic
-          export ATTIC_TOKEN=fixture.fixture.fixture
-          export HARBOR_ATTIC_MANIFEST="$PWD/attic-paths.txt"
-          mkdir -p .simit-prebuild native release
-          ln -s "$PWD/native" .simit-prebuild/ci-0
-          printf '%s\n' /nix/store/fixture-source /nix/store/fixture-runtime "$PWD/native" | sort > expected
-          # The original source-only publisher must fail the output contract.
-          ${(atticPublisher []).program}
-          ! cmp -s expected attic-paths.txt
-          ${self.apps.${system}.push-flake-inputs.program}
-          cmp expected attic-paths.txt
-          cmp expected uploaded-paths
-          ln -s "$PWD/release" .simit-prebuild/release-0
-          printf '%s\n' "$PWD/release" >> expected
-          sort -u -o expected expected
-          ${self.apps.${system}.push-flake-inputs.program}
-          cmp expected attic-paths.txt
-          cmp expected uploaded-paths
-          touch "$out"
-        '';
+        attic-publication-contract =
+          pkgs.runCommand "fcast-attic-publication-contract" {
+            nativeBuildInputs = [pkgs.coreutils];
+          } ''
+            # Exercise the real publishers without credentials or network access.
+            nix() {
+              if [ "$1 $2" = 'flake archive' ]; then
+                printf '{"path":"/nix/store/fixture-source"}\n'
+              elif [ "$1 $2" = 'path-info -r' ]; then
+                shift 2
+                printf '/nix/store/fixture-runtime\n'
+                for link in "$@"; do readlink -e "$link"; done
+              else
+                return 1
+              fi
+            }
+            attic() {
+              test "$1" = push
+              test "$(stat -c '%a' "$XDG_CONFIG_HOME/attic/config.toml")" = 600
+              cat > uploaded-paths
+            }
+            export -f nix attic
+            export ATTIC_TOKEN=fixture.fixture.fixture
+            export HARBOR_ATTIC_MANIFEST="$PWD/attic-paths.txt"
+            mkdir -p .simit-prebuild native release
+            ln -s "$PWD/native" .simit-prebuild/ci-0
+            printf '%s\n' /nix/store/fixture-source /nix/store/fixture-runtime "$PWD/native" | sort > expected
+            # The original source-only publisher must fail the output contract.
+            ${(atticPublisher []).program}
+            ! cmp -s expected attic-paths.txt
+            ${self.apps.${system}.push-flake-inputs.program}
+            cmp expected attic-paths.txt
+            cmp expected uploaded-paths
+            ln -s "$PWD/release" .simit-prebuild/release-0
+            printf '%s\n' "$PWD/release" >> expected
+            sort -u -o expected expected
+            ${self.apps.${system}.push-flake-inputs.program}
+            cmp expected attic-paths.txt
+            cmp expected uploaded-paths
+            touch "$out"
+          '';
         formatting = treefmtEval.config.build.check self;
         fmt = craneLib.cargoFmt {src = rustSrc;};
         clippy = craneLib.cargoClippy (commonArgs
