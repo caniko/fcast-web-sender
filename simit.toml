@@ -14,6 +14,7 @@ runtime = "nix"
 nix_builds = [".#fcast-companion-x86_64-linux-musl"]
 workspace = true
 workspace_strategy = "aggregate"
+push_branches = ["trunk"]
 runner = "ubuntu-24.04"
 
 [release.github]
