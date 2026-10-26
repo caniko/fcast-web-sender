@@ -37,7 +37,10 @@
     git-hooks,
     ...
   }:
-    flake-utils.lib.eachDefaultSystem (system: let
+    {
+      homeManagerModules.default = import ./nix/home-manager.nix self;
+    }
+    // flake-utils.lib.eachDefaultSystem (system: let
       pkgs = import nixpkgs {
         inherit system;
         overlays = [(import rust-overlay)];
@@ -230,6 +233,41 @@
             cargoClippyExtraArgs = "--workspace --all-targets --all-features -- --deny warnings";
           });
         extensions = frontendPackage;
+        home-manager-module = let
+          stub = pkgs.writeTextDir "bin/fcast-companion" "";
+          stubOption = lib.mkOption {type = lib.types.attrsOf lib.types.anything;};
+          inherit
+            (lib.evalModules {
+              modules = [
+                self.homeManagerModules.default
+                {
+                  options.home.packages = lib.mkOption {type = lib.types.listOf lib.types.package;};
+                  options.home.file = stubOption;
+                  options.xdg.configFile = stubOption;
+                  options.xdg.dataFile = stubOption;
+                  config = {
+                    _module.args.pkgs = pkgs;
+                    programs.fcast-web-sender = {
+                      enable = true;
+                      package = stub;
+                      chromiumExtension = stub;
+                      firefoxExtension = stub;
+                    };
+                  };
+                }
+              ];
+            })
+            config
+            ;
+          manifest = file: builtins.fromJSON (builtins.unsafeDiscardStringContext file.text);
+          chromium = manifest config.xdg.configFile."chromium/NativeMessagingHosts/com.caniko.fcast_web_sender.json";
+          firefox = manifest config.home.file.".mozilla/native-messaging-hosts/com.caniko.fcast_web_sender.json";
+        in
+          assert chromium.path == "${stub}/bin/fcast-companion";
+          assert chromium.allowed_origins == ["chrome-extension://jhcjfdafmhagmemmjbfnbjdnclkonkbh/"];
+          assert firefox.allowed_extensions == ["fcast-web-sender@caniko.com"];
+          assert config.xdg.dataFile."fcast-web-sender/extensions/firefox".source == stub;
+            pkgs.runCommand "fcast-web-sender-home-manager-module" {} "touch $out";
       };
 
       formatter = treefmtEval.config.build.wrapper;
