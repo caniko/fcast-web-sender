@@ -2,6 +2,7 @@
 scope = "hooks-only"
 
 [prebuild]
+push_branches = ["trunk", "simit/update/**"]
 release_archives = true
 publish_attic = true
 attic_app = ".#push-flake-inputs"
@@ -14,7 +15,7 @@ runtime = "nix"
 nix_builds = [".#fcast-companion-x86_64-linux-musl"]
 workspace = true
 workspace_strategy = "aggregate"
-push_branches = ["trunk"]
+push_branches = ["trunk", "simit/update/**"]
 runner = "ubuntu-24.04"
 
 [release.github]
