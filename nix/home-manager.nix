@@ -47,6 +47,14 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    # The manifest and extension paths below are the Linux locations.
+    assertions = [
+      {
+        assertion = pkgs.stdenv.hostPlatform.isLinux;
+        message = "programs.fcast-web-sender only supports Linux browser native-host locations.";
+      }
+    ];
+
     home.packages = [cfg.package];
 
     xdg.configFile = {

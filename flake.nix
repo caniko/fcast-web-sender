@@ -241,6 +241,7 @@
               modules = [
                 self.homeManagerModules.default
                 {
+                  options.assertions = lib.mkOption {type = lib.types.listOf lib.types.attrs;};
                   options.home.packages = lib.mkOption {type = lib.types.listOf lib.types.package;};
                   options.home.file = stubOption;
                   options.xdg.configFile = stubOption;
@@ -267,6 +268,7 @@
           assert chromium.allowed_origins == ["chrome-extension://jhcjfdafmhagmemmjbfnbjdnclkonkbh/"];
           assert firefox.allowed_extensions == ["fcast-web-sender@caniko.com"];
           assert config.xdg.dataFile."fcast-web-sender/extensions/firefox".source == stub;
+          assert lib.all (a: a.assertion) config.assertions;
             pkgs.runCommand "fcast-web-sender-home-manager-module" {} "touch $out";
       };
 
