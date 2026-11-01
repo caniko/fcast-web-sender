@@ -16,3 +16,14 @@ release-parity app, builds the companion through the pinned rs-harbor Nix
 derivation, packages both extensions, and publishes a GitHub release
 containing the Linux archive, checksums, and SBOMs. Release signing and
 browser-store submission remain explicit follow-up work.
+
+`homeManagerModules.default` installs the companion and registers the native
+messaging host for Chromium, Brave and Firefox:
+
+```nix
+programs.fcast-web-sender.enable = true;
+```
+
+`package`, `chromiumExtension` and `firefoxExtension` default to this flake's
+source builds; point them at release assets to avoid a local build. The
+unpacked extensions land in `$XDG_DATA_HOME/fcast-web-sender/extensions`.
