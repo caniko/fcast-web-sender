@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow_ref }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -42,6 +42,11 @@ jobs:
             cores = 2
             substituters = https://attic.candee.baby/canix https://cache.nixos.org
             trusted-public-keys = canix:lPzPzKrmYqW5Rxa5r0uQWvCqD3S5nx0h2eCy7XD5JM8= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+
+      - name: Configure GitHub input transport
+        run: |
+          git config --global --add url.https://github.com/.insteadOf ssh://git@github.com/
+          git config --global --add url.https://github.com/.insteadOf git@github.com:
 
       - name: Validate tag
         run: |
@@ -77,6 +82,7 @@ jobs:
       - name: Check release credentials
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
         run: |
           set -euo pipefail
           . ./release-env
@@ -86,6 +92,7 @@ jobs:
             if [ -z "$value" ]; then missing="$(printf '%s\n  - %s %s' "$missing" "$scope" "$name")"; fi
           }
           require_credential 'global/user secret' 'GITHUB_TOKEN' "${GITHUB_TOKEN:-}"
+          require_credential 'repo secret' 'ATTIC_TOKEN' "${ATTIC_TOKEN:-}"
           if [ -n "$missing" ]; then
             printf 'Missing release credentials:%s\n' "$missing" >&2
             exit 1
