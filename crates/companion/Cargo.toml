@@ -23,3 +23,12 @@ tokio.workspace = true
 hex.workspace = true
 rand.workspace = true
 url.workspace = true
+
+[package.metadata.binstall.overrides.x86_64-unknown-linux-gnu]
+pkg-url = "{ repo }/releases/download/{ version }/fcast-companion-{ version }-x86_64-linux-musl.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "bin/{ bin }{ binary-ext }"
+[package.metadata.binstall.overrides.x86_64-unknown-linux-musl]
+pkg-url = "{ repo }/releases/download/{ version }/fcast-companion-{ version }-x86_64-linux-musl.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "bin/{ bin }{ binary-ext }"
