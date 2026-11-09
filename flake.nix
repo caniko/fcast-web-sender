@@ -10,10 +10,10 @@
   };
 
   inputs = {
-    rs-harbor.url = "github:caniko/rs-harbor/05cc4f162b55fa904b687db1821e2463fa813e50";
-    nixpkgs.follows = "rs-harbor/nixpkgs";
-    rust-overlay.follows = "rs-harbor/rust-overlay";
-    crane.follows = "rs-harbor/crane";
+    harbor-rs.url = "github:caniko/harbor-rs/6055d7d2b3a05d7d91d50938c7fb6f862a5eec85";
+    nixpkgs.follows = "harbor-rs/nixpkgs";
+    rust-overlay.follows = "harbor-rs/rust-overlay";
+    crane.follows = "harbor-rs/crane";
     flake-utils.url = "github:numtide/flake-utils";
 
     treefmt-nix = {
@@ -29,7 +29,7 @@
   outputs = {
     self,
     nixpkgs,
-    rs-harbor,
+    harbor-rs,
     rust-overlay,
     crane,
     flake-utils,
@@ -51,14 +51,14 @@
 
       # GitHub Actions is a public runner. Keep the hosted checks and release
       # build independent of canix's private sccache transport.
-      toolchain = rs-harbor.lib.mkToolchain {
+      toolchain = harbor-rs.lib.mkToolchain {
         inherit pkgs;
         toolchainProfile = "nightly";
         cache.enable = false;
       };
       inherit (toolchain) craneLib;
       rustToolchain = toolchain.rustToolchain;
-      cross = rs-harbor.lib.mkCross {inherit pkgs system;};
+      cross = harbor-rs.lib.mkCross {inherit pkgs system;};
       rustSrc = craneLib.cleanCargoSource ./.;
       commonArgs = {
         src = rustSrc;
@@ -66,7 +66,7 @@
         cargoExtraArgs = "--package fcast-companion --bin fcast-companion";
       };
 
-      crossPackages = rs-harbor.lib.mkCrossPackages {
+      crossPackages = harbor-rs.lib.mkCrossPackages {
         inherit pkgs cross pname commonArgs;
         inherit craneLib;
         buildCache = null;
@@ -104,7 +104,7 @@
           inherit version;
           src = frontendSrc;
           fetcherVersion = 4;
-          hash = "sha256-aBPpwIHTwd/MzphMs/9zQn7X0OqHsYcMlssfCbJ7YL0=";
+          hash = "sha256-h0ExI1M9KJYopmiaKcaVtiMcLwokaQ7XaJwdoZiEmW0=";
         };
         buildPhase = ''
           export PATH="${pkgs.esbuild}/bin:$PATH"
@@ -125,7 +125,7 @@
       binaryRelease =
         if system == "x86_64-linux"
         then
-          rs-harbor.lib.mkBinaryRelease {
+          harbor-rs.lib.mkBinaryRelease {
             inherit pkgs pname version;
             artifacts.x86_64-linux-musl = {
               package = crossPackages.fcast-companion-x86_64-linux-musl;
@@ -144,7 +144,7 @@
         if binaryRelease == null
         then {}
         else {
-          binary = rs-harbor.lib.mkReleaseArtifact {
+          binary = harbor-rs.lib.mkReleaseArtifact {
             inherit pkgs pname version;
             name = binaryArchiveName;
             source = binaryRelease.archives.x86_64-linux-musl;
@@ -155,8 +155,9 @@
             rustTarget = "x86_64-unknown-linux-musl";
             validation = "static-archive";
             consumable = true;
+            binaries = ["bin/fcast-companion"];
           };
-          chromium = rs-harbor.lib.mkReleaseArtifact {
+          chromium = harbor-rs.lib.mkReleaseArtifact {
             inherit pkgs pname version;
             name = "fcast-web-sender-chromium-${version}.zip";
             source = frontendPackage;
@@ -165,7 +166,7 @@
             format = "zip";
             consumable = true;
           };
-          firefox = rs-harbor.lib.mkReleaseArtifact {
+          firefox = harbor-rs.lib.mkReleaseArtifact {
             inherit pkgs pname version;
             name = "fcast-web-sender-firefox-${version}.zip";
             source = frontendPackage;
@@ -203,10 +204,10 @@
         '';
       };
       atticPublisher = paths:
-        rs-harbor.lib.mkAtticPush {
+        harbor-rs.lib.mkAtticPush {
           inherit pkgs paths;
           flake = ".";
-          adapter = rs-harbor.lib.mkAdapter {
+          adapter = harbor-rs.lib.mkAdapter {
             attic = {
               endpoint = "https://attic.candee.baby";
               cache = "canix";
@@ -232,7 +233,7 @@
           extensions = frontendPackage;
         }
         // lib.optionalAttrs (binaryRelease != null) {
-          release-bundle = rs-harbor.lib.mkReleaseBundle {
+          release-bundle = harbor-rs.lib.mkReleaseBundle {
             inherit pkgs pname version;
             artifacts = releaseArtifacts;
           };
@@ -248,99 +249,107 @@
         program = "${releaseSmoke}/bin/fcast-release-smoke";
       };
 
-      checks = {
-        default = crossPackages.${pname};
-        attic-publication-contract =
-          pkgs.runCommand "fcast-attic-publication-contract" {
-            nativeBuildInputs = [pkgs.coreutils];
-          } ''
-            # Exercise the real publishers without credentials or network access.
-            nix() {
-              if [ "$1 $2" = 'flake archive' ]; then
-                printf '{"path":"/nix/store/fixture-source"}\n'
-              elif [ "$1 $2" = 'path-info -r' ]; then
-                shift 2
-                printf '/nix/store/fixture-runtime\n'
-                for link in "$@"; do readlink -e "$link"; done
-              else
-                return 1
-              fi
-            }
-            attic() {
-              test "$1" = push
-              test "$(stat -c '%a' "$XDG_CONFIG_HOME/attic/config.toml")" = 600
-              cat > uploaded-paths
-            }
-            export -f nix attic
-            export ATTIC_TOKEN=fixture.fixture.fixture
-            export HARBOR_ATTIC_MANIFEST="$PWD/attic-paths.txt"
-            mkdir -p .simit-prebuild native release
-            ln -s "$PWD/native" .simit-prebuild/ci-0
-            printf '%s\n' /nix/store/fixture-source /nix/store/fixture-runtime "$PWD/native" | sort > expected
-            # The original source-only publisher must fail the output contract.
-            ${(atticPublisher []).program}
-            ! cmp -s expected attic-paths.txt
-            ${self.apps.${system}.push-flake-inputs.program}
-            cmp expected attic-paths.txt
-            cmp expected uploaded-paths
-            ln -s "$PWD/release" .simit-prebuild/release-0
-            printf '%s\n' "$PWD/release" >> expected
-            sort -u -o expected expected
-            ${self.apps.${system}.push-flake-inputs.program}
-            cmp expected attic-paths.txt
-            cmp expected uploaded-paths
-            touch "$out"
-          '';
-        formatting = treefmtEval.config.build.check self;
-        fmt = craneLib.cargoFmt {src = rustSrc;};
-        clippy = craneLib.cargoClippy (commonArgs
-          // {
-            cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-            cargoClippyExtraArgs = "--workspace --all-targets --all-features -- --deny warnings";
-          });
-        extensions = frontendPackage;
-        home-manager-module = let
-          stub = pkgs.writeTextDir "bin/fcast-companion" "";
-          stubOption = lib.mkOption {type = lib.types.attrsOf lib.types.anything;};
-          inherit
-            (lib.evalModules {
-              modules = [
-                self.homeManagerModules.default
-                {
-                  options.assertions = lib.mkOption {type = lib.types.listOf lib.types.attrs;};
-                  options.home.packages = lib.mkOption {type = lib.types.listOf lib.types.package;};
-                  options.home.file = stubOption;
-                  options.xdg.configFile = stubOption;
-                  options.xdg.dataFile = stubOption;
-                  config = {
-                    _module.args.pkgs = pkgs;
-                    programs.fcast-web-sender = {
-                      enable = true;
-                      package = stub;
-                      chromiumExtension = stub;
-                      firefoxExtension = stub;
+      checks =
+        {
+          default = crossPackages.${pname};
+          attic-publication-contract =
+            pkgs.runCommand "fcast-attic-publication-contract" {
+              nativeBuildInputs = [pkgs.coreutils];
+            } ''
+              # Exercise the real publishers without credentials or network access.
+              nix() {
+                if [ "$1 $2" = 'flake archive' ]; then
+                  printf '{"path":"/nix/store/fixture-source"}\n'
+                elif [ "$1 $2" = 'path-info -r' ]; then
+                  shift 2
+                  printf '/nix/store/fixture-runtime\n'
+                  for link in "$@"; do readlink -e "$link"; done
+                else
+                  return 1
+                fi
+              }
+              attic() {
+                test "$1" = push
+                test "$(stat -c '%a' "$XDG_CONFIG_HOME/attic/config.toml")" = 600
+                cat > uploaded-paths
+              }
+              export -f nix attic
+              export ATTIC_TOKEN=fixture.fixture.fixture
+              export HARBOR_ATTIC_MANIFEST="$PWD/attic-paths.txt"
+              mkdir -p .simit-prebuild native release
+              ln -s "$PWD/native" .simit-prebuild/ci-0
+              printf '%s\n' /nix/store/fixture-source /nix/store/fixture-runtime "$PWD/native" | sort > expected
+              # The original source-only publisher must fail the output contract.
+              ${(atticPublisher []).program}
+              ! cmp -s expected attic-paths.txt
+              ${self.apps.${system}.push-flake-inputs.program}
+              cmp expected attic-paths.txt
+              cmp expected uploaded-paths
+              ln -s "$PWD/release" .simit-prebuild/release-0
+              printf '%s\n' "$PWD/release" >> expected
+              sort -u -o expected expected
+              ${self.apps.${system}.push-flake-inputs.program}
+              cmp expected attic-paths.txt
+              cmp expected uploaded-paths
+              touch "$out"
+            '';
+          formatting = treefmtEval.config.build.check self;
+          fmt = craneLib.cargoFmt {src = rustSrc;};
+          clippy = craneLib.cargoClippy (commonArgs
+            // {
+              cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+              cargoClippyExtraArgs = "--workspace --all-targets --all-features -- --deny warnings";
+            });
+          extensions = frontendPackage;
+          home-manager-module = let
+            stub = pkgs.writeTextDir "bin/fcast-companion" "";
+            stubOption = lib.mkOption {type = lib.types.attrsOf lib.types.anything;};
+            inherit
+              (lib.evalModules {
+                modules = [
+                  self.homeManagerModules.default
+                  {
+                    options.assertions = lib.mkOption {type = lib.types.listOf lib.types.attrs;};
+                    options.home.packages = lib.mkOption {type = lib.types.listOf lib.types.package;};
+                    options.home.file = stubOption;
+                    options.xdg.configFile = stubOption;
+                    options.xdg.dataFile = stubOption;
+                    config = {
+                      _module.args.pkgs = pkgs;
+                      programs.fcast-web-sender = {
+                        enable = true;
+                        package = stub;
+                        chromiumExtension = stub;
+                        firefoxExtension = stub;
+                      };
                     };
-                  };
-                }
-              ];
-            })
-            config
-            ;
-          manifest = file: builtins.fromJSON (builtins.unsafeDiscardStringContext file.text);
-          chromium = manifest config.xdg.configFile."chromium/NativeMessagingHosts/com.caniko.fcast_web_sender.json";
-          firefox = manifest config.home.file.".mozilla/native-messaging-hosts/com.caniko.fcast_web_sender.json";
-        in
-          assert chromium.path == "${stub}/bin/fcast-companion";
-          assert chromium.allowed_origins == ["chrome-extension://jhcjfdafmhagmemmjbfnbjdnclkonkbh/"];
-          assert firefox.allowed_extensions == ["fcast-web-sender@caniko.com"];
-          assert config.xdg.dataFile."fcast-web-sender/extensions/firefox".source == stub;
-          assert lib.all (a: a.assertion) config.assertions;
-            pkgs.runCommand "fcast-web-sender-home-manager-module" {} "touch $out";
-      };
+                  }
+                ];
+              })
+              config
+              ;
+            manifest = file: builtins.fromJSON (builtins.unsafeDiscardStringContext file.text);
+            chromium = manifest config.xdg.configFile."chromium/NativeMessagingHosts/com.caniko.fcast_web_sender.json";
+            firefox = manifest config.home.file.".mozilla/native-messaging-hosts/com.caniko.fcast_web_sender.json";
+          in
+            assert chromium.path == "${stub}/bin/fcast-companion";
+            assert chromium.allowed_origins == ["chrome-extension://jhcjfdafmhagmemmjbfnbjdnclkonkbh/"];
+            assert firefox.allowed_extensions == ["fcast-web-sender@caniko.com"];
+            assert config.xdg.dataFile."fcast-web-sender/extensions/firefox".source == stub;
+            assert lib.all (a: a.assertion) config.assertions;
+              pkgs.runCommand "fcast-web-sender-home-manager-module" {} "touch $out";
+        }
+        // lib.optionalAttrs (binaryRelease != null) {
+          binstall-metadata = harbor-rs.lib.mkBinstallCheck {
+            inherit pkgs;
+            bundle = self.packages.${system}.release-bundle;
+            cargoToml = ./crates/companion/Cargo.toml;
+          };
+        };
 
       formatter = treefmtEval.config.build.wrapper;
 
-      devShells = rs-harbor.lib.mkDevShells {
+      devShells = harbor-rs.lib.mkDevShells {
         inherit pkgs cross;
         inherit craneLib;
         packages = with pkgs;
