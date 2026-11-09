@@ -104,7 +104,7 @@
           inherit version;
           src = frontendSrc;
           fetcherVersion = 4;
-          hash = "sha256-aBPpwIHTwd/MzphMs/9zQn7X0OqHsYcMlssfCbJ7YL0=";
+          hash = "sha256-h0ExI1M9KJYopmiaKcaVtiMcLwokaQ7XaJwdoZiEmW0=";
         };
         buildPhase = ''
           export PATH="${pkgs.esbuild}/bin:$PATH"
