@@ -10,7 +10,7 @@
   };
 
   inputs = {
-    harbor-rs.url = "github:caniko/harbor-rs/6055d7d2b3a05d7d91d50938c7fb6f862a5eec85";
+    harbor-rs.url = "github:caniko/harbor-rs/3017b628b3a0603c2ebf7347a46951e8457ad414";
     nixpkgs.follows = "harbor-rs/nixpkgs";
     rust-overlay.follows = "harbor-rs/rust-overlay";
     crane.follows = "harbor-rs/crane";
