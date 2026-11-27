@@ -233,6 +233,7 @@
           extensions = frontendPackage;
         }
         // lib.optionalAttrs (binaryRelease != null) {
+          fcast-companion-prebuilt = import ./nix/packages/fcast-companion-prebuilt.nix {inherit pkgs harbor-rs;};
           release-bundle = harbor-rs.lib.mkReleaseBundle {
             inherit pkgs pname version;
             artifacts = releaseArtifacts;
@@ -304,7 +305,7 @@
           home-manager-module = let
             stub = pkgs.writeTextDir "bin/fcast-companion" "";
             stubOption = lib.mkOption {type = lib.types.attrsOf lib.types.anything;};
-            inherit
+            evalSender = sender:
               (lib.evalModules {
                 modules = [
                   self.homeManagerModules.default
@@ -316,27 +317,40 @@
                     options.xdg.dataFile = stubOption;
                     config = {
                       _module.args.pkgs = pkgs;
-                      programs.fcast-web-sender = {
-                        enable = true;
-                        package = stub;
-                        chromiumExtension = stub;
-                        firefoxExtension = stub;
-                      };
+                      programs.fcast-web-sender = sender // {enable = true;};
                     };
                   }
                 ];
-              })
-              config
-              ;
+              }).config;
+            config = evalSender {
+              package = stub;
+              chromiumExtension = stub;
+              firefoxExtension = stub;
+            };
             manifest = file: builtins.fromJSON (builtins.unsafeDiscardStringContext file.text);
             chromium = manifest config.xdg.configFile."chromium/NativeMessagingHosts/com.caniko.fcast_web_sender.json";
             firefox = manifest config.home.file.".mozilla/native-messaging-hosts/com.caniko.fcast_web_sender.json";
+            prebuilt = self.packages.${system}.fcast-companion-prebuilt;
+            prebuiltConfig = evalSender {package = prebuilt;};
+            prebuiltFirefox = manifest prebuiltConfig.home.file.".mozilla/native-messaging-hosts/com.caniko.fcast_web_sender.json";
           in
             assert chromium.path == "${stub}/bin/fcast-companion";
             assert chromium.allowed_origins == ["chrome-extension://jhcjfdafmhagmemmjbfnbjdnclkonkbh/"];
             assert firefox.allowed_extensions == ["fcast-web-sender@caniko.com"];
             assert config.xdg.dataFile."fcast-web-sender/extensions/firefox".source == stub;
             assert lib.all (a: a.assertion) config.assertions;
+            assert system
+            != "x86_64-linux"
+            || (
+              prebuiltConfig.home.packages
+              == [prebuilt]
+              && prebuiltConfig.xdg.configFile."chromium/NativeMessagingHosts/com.caniko.fcast_web_sender.json".text
+              == prebuiltConfig.xdg.configFile."BraveSoftware/Brave-Browser/NativeMessagingHosts/com.caniko.fcast_web_sender.json".text
+              && (manifest prebuiltConfig.xdg.configFile."chromium/NativeMessagingHosts/com.caniko.fcast_web_sender.json").path == "${prebuilt}/bin/fcast-companion"
+              && prebuiltFirefox.path == "${prebuilt}/bin/fcast-companion"
+              && prebuiltConfig.xdg.dataFile."fcast-web-sender/extensions/chromium".source == prebuilt.passthru.chromiumExtension
+              && prebuiltConfig.xdg.dataFile."fcast-web-sender/extensions/firefox".source == prebuilt.passthru.firefoxExtension
+            );
               pkgs.runCommand "fcast-web-sender-home-manager-module" {} "touch $out";
         }
         // lib.optionalAttrs (binaryRelease != null) {

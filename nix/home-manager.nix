@@ -34,15 +34,15 @@ in {
     };
     chromiumExtension = lib.mkOption {
       type = lib.types.path;
-      default = "${packages.extensions}/extensions/chromium";
-      defaultText = lib.literalExpression ''"''${fcast-web-sender.packages.''${system}.extensions}/extensions/chromium"'';
-      description = "Unpacked Chromium extension directory.";
+      default = cfg.package.passthru.chromiumExtension or "${packages.extensions}/extensions/chromium";
+      defaultText = lib.literalExpression ''package.passthru.chromiumExtension or "''${fcast-web-sender.packages.''${system}.extensions}/extensions/chromium"'';
+      description = "Unpacked Chromium extension directory. Uses the companion package's extension when available.";
     };
     firefoxExtension = lib.mkOption {
       type = lib.types.path;
-      default = "${packages.extensions}/extensions/firefox";
-      defaultText = lib.literalExpression ''"''${fcast-web-sender.packages.''${system}.extensions}/extensions/firefox"'';
-      description = "Unpacked Firefox extension directory.";
+      default = cfg.package.passthru.firefoxExtension or "${packages.extensions}/extensions/firefox";
+      defaultText = lib.literalExpression ''package.passthru.firefoxExtension or "''${fcast-web-sender.packages.''${system}.extensions}/extensions/firefox"'';
+      description = "Unpacked Firefox extension directory. Uses the companion package's extension when available.";
     };
   };
 
